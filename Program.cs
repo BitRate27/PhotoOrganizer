@@ -22,6 +22,10 @@ namespace PhotoFileViewer
         private Button browseButton;
         private string storageFolderPath;
 
+        // New control panel and aspect selector
+        private Panel controlPanel;
+        private ComboBox aspectComboBox;
+
         public PhotoViewerForm(string initialFile)
         {
             InitializeComponent();
@@ -45,7 +49,78 @@ namespace PhotoFileViewer
             this.Size = new Size(700, 500);
             this.StartPosition = FormStartPosition.CenterScreen;
 
-            // Status label at top
+            // Control panel at very top (spans full width)
+            controlPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.Gainsboro,
+                Padding = new Padding(5)
+            };
+
+            // Create a small flow panel to hold the aspect combo and the Flip button inline
+            var flow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Left,
+                AutoSize = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            aspectComboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 80,
+                Margin = new Padding(0, 6, 8, 6)
+            };
+            aspectComboBox.Items.AddRange(new object[] { "16:9", "9:16", "Square" });
+            aspectComboBox.SelectedIndex = 0; // default to 16:9
+            aspectComboBox.SelectedIndexChanged += (s, e) =>
+            {
+                var selected = aspectComboBox.SelectedItem as string;
+                if (!string.IsNullOrEmpty(selected))
+                {
+                    UpdateStatus($"Aspect set: {selected}");
+                }
+            };
+
+            // Flip button to the right of the aspect combo
+            var flipButton = new Button
+            {
+                Text = "Flip",
+                AutoSize = true,
+                Margin = new Padding(0, 4, 8, 4)
+            };
+            flipButton.Click += (s, e) =>
+            {
+                try
+                {
+                    if (pictureBox.Image != null)
+                    {
+                        // Flip horizontally
+                        pictureBox.Image.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                        pictureBox.Refresh();
+                        UpdateStatus("Image flipped horizontally");
+                    }
+                    else
+                    {
+                        UpdateStatus("No image to flip");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error flipping image: {ex.Message}");
+                }
+            };
+
+            // Add controls into the flow panel then into the control panel
+            flow.Controls.Add(aspectComboBox);
+            flow.Controls.Add(flipButton);
+            controlPanel.Controls.Add(flow);
+
+            // Status label below the control panel
             statusLabel = new Label
             {
                 Dock = DockStyle.Top,
@@ -75,12 +150,12 @@ namespace PhotoFileViewer
             imagePanel.Controls.Add(pictureBox);
 
             // Panel for storage folder selection (bottom)
-            Panel instructionsPanel = new Panel
+            Panel storageFolderPanel = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 80,
+                Height = 40,
                 BackColor = Color.WhiteSmoke,
-                Padding = new Padding(10)
+                Padding = new Padding(5)
             };
 
             // Use a TableLayoutPanel so the Browse button stays visible regardless of window width
@@ -94,31 +169,37 @@ namespace PhotoFileViewer
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F)); // label width
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // textbox fills remaining space
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // button auto size
+            // Fixed row height so we can vertically center controls
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
 
             Label storageLabel = new Label
             {
                 Text = "Storage folder:",
                 AutoSize = false,
+                // Let the cell sizing and Dock control vertical alignment
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 ForeColor = Color.DarkSlateGray,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 3, 5, 3)
+                Margin = new Padding(0, 0, 5, 0)
             };
 
             storageFolderTextBox = new TextBox
             {
                 ReadOnly = true,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 3, 5, 3)
+                Margin = new Padding(0, 3, 5, 3),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right
             };
 
             browseButton = new Button
             {
                 Text = "Browse...",
-                AutoSize = true,
-                Anchor = AnchorStyles.Right,
-                Margin = new Padding(0, 0, 0, 0)
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                Height = 24,
+                Margin = new Padding(0, 3, 0, 3),
+                FlatStyle = FlatStyle.Standard
             };
             browseButton.Click += (s, e) =>
             {
@@ -144,11 +225,13 @@ namespace PhotoFileViewer
             layout.Controls.Add(storageFolderTextBox, 1, 0);
             layout.Controls.Add(browseButton, 2, 0);
 
-            instructionsPanel.Controls.Add(layout);
+            storageFolderPanel.Controls.Add(layout);
 
+            // Add controls to the form in the proper order (top to bottom)
+            this.Controls.Add(storageFolderPanel);
             this.Controls.Add(imagePanel);
             this.Controls.Add(statusLabel);
-            this.Controls.Add(instructionsPanel);
+            this.Controls.Add(controlPanel);
 
             this.FormClosing += (s, e) => isRunning = false;
         }
