@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -52,10 +53,10 @@ namespace PhotoFileViewer
             // Control panel at very top (spans full width)
             controlPanel = new Panel
             {
-                Dock = DockStyle.Top,
-                Height = 40,
+                // Will be placed in the layout's first row
                 BackColor = Color.Gainsboro,
-                Padding = new Padding(5)
+                Padding = new Padding(5),
+                Dock = DockStyle.Fill
             };
 
             // Create a small flow panel to hold the aspect combo and the Flip button inline
@@ -83,6 +84,8 @@ namespace PhotoFileViewer
                 if (!string.IsNullOrEmpty(selected))
                 {
                     UpdateStatus($"Aspect set: {selected}");
+                    // redraw overlay when aspect changes
+                    pictureBox.Invalidate();
                 }
             };
 
@@ -115,23 +118,54 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Rotate button to the right of the Flip button
+            var rotateButton = new Button
+            {
+                Text = "Rotate",
+                AutoSize = true,
+                Margin = new Padding(0, 4, 8, 4)
+            };
+            rotateButton.Click += (s, e) =>
+            {
+                try
+                {
+                    if (pictureBox.Image != null)
+                    {
+                        // Rotate 90 degrees clockwise
+                        pictureBox.Image.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                        pictureBox.Refresh();
+                        UpdateStatus("Image rotated 90° clockwise");
+                    }
+                    else
+                    {
+                        UpdateStatus("No image to rotate");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error rotating image: {ex.Message}");
+                }
+            };
+
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(flipButton);
+            flow.Controls.Add(rotateButton);
             controlPanel.Controls.Add(flow);
 
-            // Status label below the control panel
+            // Status label (will be in bottom row)
             statusLabel = new Label
             {
-                Dock = DockStyle.Top,
-                Height = 30,
+                // Placed in layout's last row
+                Text = "",
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 Padding = new Padding(10, 5, 10, 5),
-                BackColor = Color.LightBlue
+                BackColor = Color.LightBlue,
+                Dock = DockStyle.Fill
             };
 
-            // Panel that contains the PictureBox
+            // Panel that contains the PictureBox (middle, fills available space)
             imagePanel = new Panel
             {
                 Dock = DockStyle.Fill,
@@ -142,20 +176,23 @@ namespace PhotoFileViewer
             pictureBox = new PictureBox
             {
                 Location = new Point(0, 0),
-                // Fill the available area and scale the image to fit while preserving aspect ratio
+                // Will be stretched in the layout cell
                 Dock = DockStyle.Fill,
                 SizeMode = PictureBoxSizeMode.Zoom
             };
 
+            // Paint overlay and handle resize
+            pictureBox.Paint += PictureBox_Paint;
+            pictureBox.Resize += (s, e) => pictureBox.Invalidate();
+
             imagePanel.Controls.Add(pictureBox);
 
-            // Panel for storage folder selection (bottom)
+            // Panel for storage folder selection (third row)
             Panel storageFolderPanel = new Panel
             {
-                Dock = DockStyle.Bottom,
-                Height = 40,
                 BackColor = Color.WhiteSmoke,
-                Padding = new Padding(5)
+                Padding = new Padding(5),
+                Dock = DockStyle.Fill
             };
 
             // Use a TableLayoutPanel so the Browse button stays visible regardless of window width
@@ -227,13 +264,87 @@ namespace PhotoFileViewer
 
             storageFolderPanel.Controls.Add(layout);
 
-            // Add controls to the form in the proper order (top to bottom)
-            this.Controls.Add(storageFolderPanel);
-            this.Controls.Add(imagePanel);
-            this.Controls.Add(statusLabel);
-            this.Controls.Add(controlPanel);
+            // Main layout to stack panels vertically: controlPanel, imagePanel, storageFolderPanel, statusLabel
+            var mainLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+
+            // Row styles: controlPanel fixed, imagePanel fills, storageFolderPanel fixed, statusLabel fixed
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F)); // controlPanel
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // imagePanel fills remaining
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F)); // storageFolderPanel
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F)); // statusLabel
+
+            mainLayout.Controls.Add(controlPanel, 0, 0);
+            mainLayout.Controls.Add(imagePanel, 0, 1);
+            mainLayout.Controls.Add(storageFolderPanel, 0, 2);
+            mainLayout.Controls.Add(statusLabel, 0, 3);
+
+            this.Controls.Add(mainLayout);
 
             this.FormClosing += (s, e) => isRunning = false;
+        }
+
+        private void PictureBox_Paint(object sender, PaintEventArgs e)
+        {
+            try
+            {
+                double ratio = ParseAspectRatio(aspectComboBox.SelectedItem as string);
+                if (ratio <= 0)
+                    return;
+
+                int w = pictureBox.ClientSize.Width;
+                int h = pictureBox.ClientSize.Height;
+                if (w <= 0 || h <= 0)
+                    return;
+
+                // Determine maximum rectangle matching ratio that fits within w x h
+                double controlRatio = (double)w / h;
+                int rectW, rectH;
+                if (controlRatio > ratio)
+                {
+                    // height limits
+                    rectH = h;
+                    rectW = (int)Math.Round(h * ratio);
+                }
+                else
+                {
+                    // width limits
+                    rectW = w;
+                    rectH = (int)Math.Round(w / ratio);
+                }
+
+                int x = (w - rectW) / 2;
+                int y = (h - rectH) / 2;
+
+                using (var pen = new Pen(Color.Yellow, 2))
+                {
+                    pen.Alignment = PenAlignment.Center;
+                    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                    e.Graphics.DrawRectangle(pen, x, y, rectW - 1, rectH - 1);
+                }
+            }
+            catch
+            {
+                // swallow any painting exceptions
+            }
+        }
+
+        private double ParseAspectRatio(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 16.0 / 9.0;
+            if (s.Equals("Square", StringComparison.OrdinalIgnoreCase)) return 1.0;
+            var parts = s.Split(':');
+            if (parts.Length == 2 && double.TryParse(parts[0], out double a) && double.TryParse(parts[1], out double b) && b != 0)
+            {
+                return a / b;
+            }
+            return 16.0 / 9.0;
         }
 
         public void OpenFile(string filePath)
@@ -294,8 +405,8 @@ namespace PhotoFileViewer
 
                 UpdateStatus($"[{timestamp}] Opened: {fileName} ({fileSize}) - {imgW}x{imgH} (fitted to window)");
 
-                // Bring window to front
-                BringToFront();
+                // redraw overlay when a new image is loaded
+                pictureBox.Invalidate();
             }
             catch (Exception ex)
             {
@@ -317,19 +428,6 @@ namespace PhotoFileViewer
             }
 
             statusLabel.Text = status;
-        }
-
-        private void BringToFront()
-        {
-            if (WindowState == FormWindowState.Minimized)
-            {
-                WindowState = FormWindowState.Normal;
-            }
-
-            TopMost = true;
-            TopMost = false;
-            Activate();
-            Focus();
         }
 
         private string FormatFileSize(long bytes)
