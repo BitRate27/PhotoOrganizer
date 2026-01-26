@@ -27,6 +27,15 @@ namespace PhotoFileViewer
         private Panel controlPanel;
         private ComboBox aspectComboBox;
 
+        // Keep track of currently opened file path
+        private string currentFilePath;
+
+        // Store overlay rectangle so it can be accessed later
+        private int overlayX;
+        private int overlayY;
+        private int overlayWidth;
+        private int overlayHeight;
+
         public PhotoViewerForm(string initialFile)
         {
             InitializeComponent();
@@ -199,13 +208,14 @@ namespace PhotoFileViewer
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 3,
+                ColumnCount = 4,
                 RowCount = 1,
                 AutoSize = false
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F)); // label width
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // textbox fills remaining space
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // button auto size
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // browse button
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // save button
             // Fixed row height so we can vertically center controls
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
 
@@ -258,9 +268,103 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Save button to the right of Browse
+            var saveButton = new Button
+            {
+                Text = "Save",
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                Height = 24,
+                Margin = new Padding(6, 3, 0, 3),
+                FlatStyle = FlatStyle.Standard
+            };
+            saveButton.Click += (s, e) =>
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(storageFolderPath) || !Directory.Exists(storageFolderPath))
+                    {
+                        MessageBox.Show(this, "Please select a storage folder first.", "No Storage Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    if (pictureBox.Image == null)
+                    {
+                        UpdateStatus("No image to save");
+                        return;
+                    }
+
+                    // Determine mapping from PictureBox client coords to image pixels
+                    var srcImg = pictureBox.Image as Image;
+                    int imgW = srcImg.Width;
+                    int imgH = srcImg.Height;
+
+                    int pbW = pictureBox.ClientSize.Width;
+                    int pbH = pictureBox.ClientSize.Height;
+
+                    double scale = Math.Min((double)pbW / imgW, (double)pbH / imgH);
+                    int dispW = (int)Math.Round(imgW * scale);
+                    int dispH = (int)Math.Round(imgH * scale);
+                    int offsetX = (pbW - dispW) / 2;
+                    int offsetY = (pbH - dispH) / 2;
+
+                    // Intersection of overlay rectangle with displayed image area
+                    var overlayRect = new Rectangle(overlayX, overlayY, overlayWidth, overlayHeight);
+                    var imageRect = new Rectangle(offsetX, offsetY, dispW, dispH);
+                    var intersect = Rectangle.Intersect(overlayRect, imageRect);
+                    if (intersect.IsEmpty)
+                    {
+                        MessageBox.Show(this, "Selected overlay does not intersect the image.", "Nothing to save", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    // Map to source image pixels
+                    double invScale = 1.0 / scale;
+                    int srcX = (int)Math.Floor((intersect.X - offsetX) * invScale);
+                    int srcY = (int)Math.Floor((intersect.Y - offsetY) * invScale);
+                    int srcW = (int)Math.Ceiling(intersect.Width * invScale);
+                    int srcH = (int)Math.Ceiling(intersect.Height * invScale);
+
+                    // Clamp to image bounds
+                    srcX = Math.Max(0, Math.Min(srcX, imgW - 1));
+                    srcY = Math.Max(0, Math.Min(srcY, imgH - 1));
+                    if (srcX + srcW > imgW) srcW = imgW - srcX;
+                    if (srcY + srcH > imgH) srcH = imgH - srcY;
+                    if (srcW <= 0 || srcH <= 0)
+                    {
+                        MessageBox.Show(this, "Computed crop is empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    // Crop and save
+                    using (var bmp = new Bitmap(srcW, srcH))
+                    using (var g = Graphics.FromImage(bmp))
+                    {
+                        g.DrawImage(srcImg, new Rectangle(0, 0, srcW, srcH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+
+                        string fileName = "image_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".jpg";
+                        if (!string.IsNullOrEmpty(currentFilePath))
+                        {
+                            fileName = Path.GetFileName(currentFilePath);
+                        }
+
+                        string destPath = Path.Combine(storageFolderPath, fileName);
+                        // Choose JPEG encoder to save; overwrite if exists
+                        bmp.Save(destPath, System.Drawing.Imaging.ImageFormat.Jpeg);
+                        UpdateStatus($"Saved cropped image to: {destPath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error saving image: {ex.Message}");
+                    MessageBox.Show(this, ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
             layout.Controls.Add(storageLabel, 0, 0);
             layout.Controls.Add(storageFolderTextBox, 1, 0);
             layout.Controls.Add(browseButton, 2, 0);
+            layout.Controls.Add(saveButton, 3, 0);
 
             storageFolderPanel.Controls.Add(layout);
 
@@ -321,6 +425,12 @@ namespace PhotoFileViewer
 
                 int x = (w - rectW) / 2;
                 int y = (h - rectH) / 2;
+
+                // store overlay coordinates for future use
+                overlayX = x;
+                overlayY = y;
+                overlayWidth = rectW;
+                overlayHeight = rectH;
 
                 using (var pen = new Pen(Color.Yellow, 2))
                 {
@@ -397,6 +507,7 @@ namespace PhotoFileViewer
 
                 // With Dock = Fill and SizeMode = Zoom, the image will be scaled to fit the available window area.
                 string fileName = Path.GetFileName(filePath);
+                currentFilePath = filePath;
                 string fileSize = FormatFileSize(new FileInfo(filePath).Length);
                 string timestamp = DateTime.Now.ToString("HH:mm:ss");
 
