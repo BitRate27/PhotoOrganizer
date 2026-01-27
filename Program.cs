@@ -35,6 +35,13 @@ namespace PhotoFileViewer
         private int overlayY;
         private int overlayWidth;
         private int overlayHeight;
+        private Image fullImage;
+        // Center point in fullImage to clip around (in source image coordinates)
+        private Point fullImageClipCenter;
+        // Dragging state for clip-center panning
+        private bool isDraggingClip = false;
+        private Point dragStartMouse;
+        private Point dragStartCenter;
 
         public PhotoViewerForm(string initialFile)
         {
@@ -193,6 +200,12 @@ namespace PhotoFileViewer
             // Paint overlay and handle resize
             pictureBox.Paint += PictureBox_Paint;
             pictureBox.Resize += (s, e) => pictureBox.Invalidate();
+
+            // Allow click+drag on the picture to pan the clip center
+            pictureBox.MouseDown += PictureBox_MouseDown;
+            pictureBox.MouseMove += PictureBox_MouseMove;
+            pictureBox.MouseUp += PictureBox_MouseUp;
+            pictureBox.MouseLeave += (s, e) => { if (isDraggingClip) { isDraggingClip = false; Cursor = Cursors.Default; } };
 
             imagePanel.Controls.Add(pictureBox);
 
@@ -398,6 +411,41 @@ namespace PhotoFileViewer
         {
             try
             {
+                // If we have the original full image, draw a clipped region centered on the full image's center
+                if (fullImage != null)
+                {
+                    int pbw = pictureBox.ClientSize.Width;
+                    int pbh = pictureBox.ClientSize.Height;
+                    if (pbw > 0 && pbh > 0)
+                    {
+                        // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
+                        int srcW = Math.Min(fullImage.Width, pbw);
+                        int srcH = Math.Min(fullImage.Height, pbh);
+
+                        int srcX = fullImageClipCenter.X - srcW / 2;
+                        int srcY = fullImageClipCenter.Y - srcH / 2;
+
+                        // Clamp (shouldn't be necessary but safe)
+                        if (srcX < 0) srcX = 0;
+                        if (srcY < 0) srcY = 0;
+                        if (srcX + srcW > fullImage.Width) srcW = fullImage.Width - srcX;
+                        if (srcY + srcH > fullImage.Height) srcH = fullImage.Height - srcY;
+
+                        // Use ClipImage to obtain the cropped region, then draw it scaled to the PictureBox client area
+                        using (var clipped = ClipImage(fullImage, new Rectangle(srcX, srcY, srcW, srcH)))
+                        {
+                            if (clipped != null)
+                            {
+                                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
+
+                                e.Graphics.DrawImage(clipped, new Rectangle(0, 0, pbw, pbh));
+                            }
+                        }
+                    }
+                }
+
                 double ratio = ParseAspectRatio(aspectComboBox.SelectedItem as string);
                 if (ratio <= 0)
                     return;
@@ -445,6 +493,56 @@ namespace PhotoFileViewer
             }
         }
 
+        private void PictureBox_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (fullImage == null) return;
+
+            isDraggingClip = true;
+            dragStartMouse = e.Location;
+            dragStartCenter = fullImageClipCenter;
+            Cursor = Cursors.Hand;
+            pictureBox.Capture = true;
+        }
+
+        private void PictureBox_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!isDraggingClip || fullImage == null) return;
+
+            int pbw = pictureBox.ClientSize.Width;
+            int pbh = pictureBox.ClientSize.Height;
+            if (pbw <=0 || pbh <=0) return;
+
+            // Source rectangle size used in Paint
+            int srcW = Math.Min(fullImage.Width, pbw);
+            int srcH = Math.Min(fullImage.Height, pbh);
+
+            int dx = e.Location.X - dragStartMouse.X;
+            int dy = e.Location.Y - dragStartMouse.Y;
+
+            // Map display delta to source delta and update center (subtract so content follows cursor)
+            int deltaSrcX = (int)Math.Round(dx * (double)srcW / pbw);
+            int deltaSrcY = (int)Math.Round(dy * (double)srcH / pbh);
+
+            int newCenterX = dragStartCenter.X - deltaSrcX;
+            int newCenterY = dragStartCenter.Y - deltaSrcY;
+
+            // Clamp to image bounds
+            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width -1));
+            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height -1));
+
+            fullImageClipCenter = new Point(newCenterX, newCenterY);
+            pictureBox.Invalidate();
+        }
+
+        private void PictureBox_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            isDraggingClip = false;
+            Cursor = Cursors.Default;
+            pictureBox.Capture = false;
+        }
+
         private double ParseAspectRatio(string s)
         {
             if (string.IsNullOrEmpty(s)) return 16.0 / 9.0;
@@ -455,6 +553,71 @@ namespace PhotoFileViewer
                 return a / b;
             }
             return 16.0 / 9.0;
+        }
+
+        // Clip the given image to the provided rectangle (inclusive). Returns a new Image (Bitmap).
+        private Image ClipImage(Image source, Rectangle rect)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            // Clamp rect to source bounds
+            Rectangle srcBounds = new Rectangle(0, 0, source.Width, source.Height);
+            Rectangle clip = Rectangle.Intersect(srcBounds, rect);
+
+            if (clip.IsEmpty || clip.Width <= 0 || clip.Height <= 0)
+            {
+                return null;
+            }
+
+            var bmp = new Bitmap(clip.Width, clip.Height);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                // Draw the requested region of the source into the new bitmap
+                g.DrawImage(source, new Rectangle(0, 0, clip.Width, clip.Height), clip, GraphicsUnit.Pixel);
+            }
+
+            return bmp;
+        }
+
+        // Zoom the image around the given center. Takes a source image, a center point (in source coordinates),
+        // an input region size (inXSize x inYSize) to sample around the center, and a zoomFactor.
+        // Produces a new Image whose size is (inXSize * zoomFactor, inYSize * zoomFactor) containing
+        // the sampled region scaled to the output size.
+        private Image ZoomImage(Image source, Point center, int inXSize, int inYSize, double zoomFactor)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (inXSize <= 0 || inYSize <= 0) throw new ArgumentException("inXSize and inYSize must be >0");
+            if (zoomFactor <= 0) throw new ArgumentException("zoomFactor must be >0");
+
+            // Determine source rectangle centered on `center` with requested input size.
+            int srcW = Math.Min(inXSize, source.Width);
+            int srcH = Math.Min(inYSize, source.Height);
+
+            int srcX = center.X - srcW / 2;
+            int srcY = center.Y - srcH / 2;
+
+            // Clamp to source bounds
+            if (srcX < 0) srcX = 0;
+            if (srcY < 0) srcY = 0;
+            if (srcX + srcW > source.Width) srcX = Math.Max(0, source.Width - srcW);
+            if (srcY + srcH > source.Height) srcY = Math.Max(0, source.Height - srcH);
+
+            int destW = Math.Max(1, (int)Math.Round(inXSize * zoomFactor));
+            int destH = Math.Max(1, (int)Math.Round(inYSize * zoomFactor));
+
+            var bmp = new Bitmap(destW, destH);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                g.DrawImage(source, new Rectangle(0, 0, destW, destH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+            }
+
+            return bmp;
         }
 
         public void OpenFile(string filePath)
@@ -501,7 +664,18 @@ namespace PhotoFileViewer
                     using (var img = Image.FromStream(ms))
                     {
                         // Create a copy (Bitmap) so it does not depend on the stream
-                        pictureBox.Image = new Bitmap(img);
+                        if (fullImage != null)
+                        {
+                            var old = fullImage;
+                            fullImage = null;
+                            old.Dispose();
+                        }
+                        fullImage = new Bitmap(img);
+
+                        // Default clip center is image center
+                        fullImageClipCenter = new Point(fullImage.Width /2, fullImage.Height /2);
+
+                        pictureBox.Image = (Image)fullImage.Clone();
                     }
                 }
 
