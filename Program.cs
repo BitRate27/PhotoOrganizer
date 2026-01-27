@@ -223,7 +223,11 @@ namespace PhotoFileViewer
             pictureBox.Paint += PictureBox_Paint;
 
             // When the picture box size changes, regenerate the clipped image so it matches new size
-            pictureBox.Resize += (s, e) => { updatePictureBoxImage(); pictureBox.Invalidate(); };
+            this.Resize += (s, e) =>
+            {
+                updatePictureBoxImage();
+                pictureBox.Refresh();
+            };
 
             // Allow click+drag on the picture to pan the clip center
             pictureBox.MouseDown += PictureBox_MouseDown;
@@ -457,13 +461,6 @@ namespace PhotoFileViewer
                     if (srcX + srcW > fullImage.Width) srcW = fullImage.Width - srcX;
                     if (srcY + srcH > fullImage.Height) srcH = fullImage.Height - srcY;
 
-                    if (pictureBox.Image != null)
-                    {
-                        var old = pictureBox.Image;
-                        pictureBox.Image = null;
-                        old.Dispose();
-                    }
-
                     pictureBox.Image = ClipImage(fullImage, new Rectangle(srcX, srcY, srcW, srcH));
                 }
             }
@@ -585,7 +582,7 @@ namespace PhotoFileViewer
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
             updatePictureBoxImage();
-            pictureBox.Invalidate();
+            pictureBox.Refresh();
         }
 
         private void PictureBox_MouseUp(object sender, MouseEventArgs e)
@@ -736,7 +733,7 @@ namespace PhotoFileViewer
                 UpdateStatus($"[{timestamp}] Opened: {fileName} ({fileSize}) - {imgW}x{imgH} (fitted to window)");
 
                 // redraw overlay when a new image is loaded
-                pictureBox.Invalidate();
+                pictureBox.Refresh();
             }
             catch (Exception ex)
             {
