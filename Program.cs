@@ -448,6 +448,7 @@ namespace PhotoFileViewer
 
         private void PictureBox_Paint(object sender, PaintEventArgs e)
         {
+            const int overlayPadding = 15;
             try
             {
                 int w = pictureBox.ClientSize.Width;
@@ -475,14 +476,14 @@ namespace PhotoFileViewer
                 if (controlRatio > ratio)
                 {
                     // height limits
-                    rectH = h;
-                    rectW = (int)Math.Round(h * ratio);
+                    rectH = h - (overlayPadding * 2);
+                    rectW = (int)Math.Round((h - (overlayPadding * 2)) * ratio);
                 }
                 else
                 {
                     // width limits
-                    rectW = w;
-                    rectH = (int)Math.Round(w / ratio);
+                    rectW = w - (overlayPadding * 2);
+                    rectH = (int)Math.Round((w - (overlayPadding * 2)) / ratio);
                 }
 
                 int x = (w - rectW) / 2;
@@ -494,11 +495,25 @@ namespace PhotoFileViewer
                 overlayWidth = rectW;
                 overlayHeight = rectH;
 
-                using (var pen = new Pen(Color.Yellow, 2))
+                // Draw a semi-transparent border by filling the areas outside the inner rectangle.
+                // The inner rectangle remains fully transparent so the image shows through.
+                var overlayColor = Color.FromArgb(140,0,0,0); // semi-transparent black
+                using (var brush = new SolidBrush(overlayColor))
                 {
-                    pen.Alignment = PenAlignment.Center;
+                    // Top
+                    e.Graphics.FillRectangle(brush,0,0, w, y);
+                    // Bottom
+                    e.Graphics.FillRectangle(brush,0, y + rectH, w, h - (y + rectH));
+                    // Left
+                    e.Graphics.FillRectangle(brush,0, y, x, rectH);
+                    // Right
+                    e.Graphics.FillRectangle(brush, x + rectW, y, w - (x + rectW), rectH);
+                }
+                // Optionally draw a thin border line to delineate the inner rectangle
+                using (var pen = new Pen(Color.FromArgb(200,255,255,255),1))
+                {
                     e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                    e.Graphics.DrawRectangle(pen, x, y, rectW - 1, rectH - 1);
+                    e.Graphics.DrawRectangle(pen, x, y, rectW -1, rectH -1);
                 }
             }
             catch
