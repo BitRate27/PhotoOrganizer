@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.Remoting;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -541,8 +542,8 @@ namespace PhotoFileViewer
             int newCenterY = dragStartCenter.Y - deltaSrcY;
 
             // Clamp to image bounds
-            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width -1));
-            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height -1));
+            newCenterX = Math.Max(pbw/2, Math.Min(newCenterX, fullImage.Width - 1 - pbw/2));
+            newCenterY = Math.Max(pbh/2, Math.Min(newCenterY, fullImage.Height - 1 - pbh/2));
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
             updatePictureBoxImage();
