@@ -406,53 +406,66 @@ namespace PhotoFileViewer
 
             this.FormClosing += (s, e) => isRunning = false;
         }
+        private void updatePictureBoxImage()
+        {
+            if (pictureBox.Image != null)
+            {
+                var old = pictureBox.Image;
+                pictureBox.Image = null;
+                old.Dispose();
+            }
+            if (fullImage != null)
+            {
+                int pbw = pictureBox.ClientSize.Width;
+                int pbh = pictureBox.ClientSize.Height;
+                if (pbw > 0 && pbh > 0)
+                {
+                    // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
+                    int srcW = Math.Min(fullImage.Width, pbw);
+                    int srcH = Math.Min(fullImage.Height, pbh);
+
+                    int srcX = fullImageClipCenter.X - srcW / 2;
+                    int srcY = fullImageClipCenter.Y - srcH / 2;
+
+                    // Clamp (shouldn't be necessary but safe)
+                    if (srcX < 0) srcX = 0;
+                    if (srcY < 0) srcY = 0;
+                    if (srcX + srcW > fullImage.Width) srcW = fullImage.Width - srcX;
+                    if (srcY + srcH > fullImage.Height) srcH = fullImage.Height - srcY;
+
+                    if (pictureBox.Image != null)
+                    {
+                        var old = pictureBox.Image;
+                        pictureBox.Image = null;
+                        old.Dispose();
+                    }
+
+                    pictureBox.Image = ClipImage(fullImage, new Rectangle(srcX, srcY, srcW, srcH));
+                }
+            }
+        }
 
         private void PictureBox_Paint(object sender, PaintEventArgs e)
         {
             try
             {
-                // If we have the original full image, draw a clipped region centered on the full image's center
-                if (fullImage != null)
+                int w = pictureBox.ClientSize.Width;
+                int h = pictureBox.ClientSize.Height; 
+                
+                if (w <= 0 || h <= 0)
+                    return;
+
+                if (pictureBox.Image != null)
                 {
-                    int pbw = pictureBox.ClientSize.Width;
-                    int pbh = pictureBox.ClientSize.Height;
-                    if (pbw > 0 && pbh > 0)
-                    {
-                        // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
-                        int srcW = Math.Min(fullImage.Width, pbw);
-                        int srcH = Math.Min(fullImage.Height, pbh);
+                    e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
 
-                        int srcX = fullImageClipCenter.X - srcW / 2;
-                        int srcY = fullImageClipCenter.Y - srcH / 2;
-
-                        // Clamp (shouldn't be necessary but safe)
-                        if (srcX < 0) srcX = 0;
-                        if (srcY < 0) srcY = 0;
-                        if (srcX + srcW > fullImage.Width) srcW = fullImage.Width - srcX;
-                        if (srcY + srcH > fullImage.Height) srcH = fullImage.Height - srcY;
-
-                        // Use ClipImage to obtain the cropped region, then draw it scaled to the PictureBox client area
-                        using (var clipped = ClipImage(fullImage, new Rectangle(srcX, srcY, srcW, srcH)))
-                        {
-                            if (clipped != null)
-                            {
-                                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                                e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                                e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
-
-                                e.Graphics.DrawImage(clipped, new Rectangle(0, 0, pbw, pbh));
-                            }
-                        }
-                    }
+                    e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0, 0, w, h));
                 }
 
                 double ratio = ParseAspectRatio(aspectComboBox.SelectedItem as string);
                 if (ratio <= 0)
-                    return;
-
-                int w = pictureBox.ClientSize.Width;
-                int h = pictureBox.ClientSize.Height;
-                if (w <= 0 || h <= 0)
                     return;
 
                 // Determine maximum rectangle matching ratio that fits within w x h
@@ -532,6 +545,7 @@ namespace PhotoFileViewer
             newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height -1));
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
+            updatePictureBoxImage();
             pictureBox.Invalidate();
         }
 
@@ -649,14 +663,6 @@ namespace PhotoFileViewer
                     UpdateStatus($"Opening file (unsupported extension): {Path.GetFileName(filePath)}");
                 }
 
-                // Dispose previous image to avoid memory leak and file locks
-                if (pictureBox.Image != null)
-                {
-                    var old = pictureBox.Image;
-                    pictureBox.Image = null;
-                    old.Dispose();
-                }
-
                 // Read file into memory then create image from memory to avoid locking the file
                 byte[] bytes = File.ReadAllBytes(filePath);
                 using (var ms = new MemoryStream(bytes))
@@ -675,7 +681,7 @@ namespace PhotoFileViewer
                         // Default clip center is image center
                         fullImageClipCenter = new Point(fullImage.Width /2, fullImage.Height /2);
 
-                        pictureBox.Image = (Image)fullImage.Clone();
+                        updatePictureBoxImage();
                     }
                 }
 
