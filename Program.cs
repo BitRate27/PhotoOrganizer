@@ -117,10 +117,12 @@ namespace PhotoFileViewer
             {
                 try
                 {
-                    if (pictureBox.Image != null)
+                    if (fullImage != null)
                     {
                         // Flip horizontally
-                        pictureBox.Image.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                        fullImage.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                        fullImageClipCenter = new Point(fullImage.Width - fullImageClipCenter.X, fullImageClipCenter.Y);
+                        updatePictureBoxImage();
                         pictureBox.Refresh();
                         UpdateStatus("Image flipped horizontally");
                     }
@@ -146,10 +148,29 @@ namespace PhotoFileViewer
             {
                 try
                 {
-                    if (pictureBox.Image != null)
+                    if (fullImage != null)
                     {
                         // Rotate 90 degrees clockwise
-                        pictureBox.Image.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                        // Save old center and dimensions before rotation
+                        int oldCenterX = fullImageClipCenter.X;
+                        int oldCenterY = fullImageClipCenter.Y;
+                        int oldWidth = fullImage.Width;
+                        int oldHeight = fullImage.Height;
+
+                        fullImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+
+                        // After rotating 90° clockwise, a point at (x,y) in the old image
+                        // maps to (y, oldWidth -1 - x) in the rotated image.
+                        int newCenterX = oldCenterY;
+                        int newCenterY = oldWidth - 1 - oldCenterX;
+
+                        // Clamp to new image bounds
+                        newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width - 1));
+                        newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height - 1));
+
+                        fullImageClipCenter = new Point(newCenterX, newCenterY);
+
+                        updatePictureBoxImage();
                         pictureBox.Refresh();
                         UpdateStatus("Image rotated 90° clockwise");
                     }
@@ -200,7 +221,9 @@ namespace PhotoFileViewer
 
             // Paint overlay and handle resize
             pictureBox.Paint += PictureBox_Paint;
-            pictureBox.Resize += (s, e) => pictureBox.Invalidate();
+
+            // When the picture box size changes, regenerate the clipped image so it matches new size
+            pictureBox.Resize += (s, e) => { updatePictureBoxImage(); pictureBox.Invalidate(); };
 
             // Allow click+drag on the picture to pan the clip center
             pictureBox.MouseDown += PictureBox_MouseDown;
