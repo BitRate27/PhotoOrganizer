@@ -36,6 +36,7 @@ namespace PhotoFileViewer
         private int overlayY;
         private int overlayWidth;
         private int overlayHeight;
+        private Image originalImage;
         private Image fullImage;
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
@@ -227,10 +228,22 @@ namespace PhotoFileViewer
                 try
                 {
                     // Increase zoomFactor by 0.1 each time
-                    zoomFactor += 0.1;
-                    UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
-                    // Refresh the displayed image in case zoomFactor is used elsewhere
-                    updatePictureBoxImage();
+                    int pbw = pictureBox.Width;
+                    int pbh = pictureBox.Height;
+
+                    if ((pbw * (zoomFactor + 0.1) < fullImage.Width) &&
+                        (pbh * (zoomFactor + 0.1) < fullImage.Height))
+                    {
+                        zoomFactor += 0.1;
+                        UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
+                    }
+                    else
+                    {
+                        UpdateStatus($"Maximum Zoom factor: {zoomFactor:0.0}");
+                    }    
+
+                        // Refresh the displayed image in case zoomFactor is used elsewhere
+                        updatePictureBoxImage();
                     pictureBox.Refresh();
                 }
                 catch (Exception ex)
@@ -646,8 +659,8 @@ namespace PhotoFileViewer
             int deltaSrcX = (int)Math.Round(dx * (double)srcW / pbw);
             int deltaSrcY = (int)Math.Round(dy * (double)srcH / pbh);
 
-            int newCenterX = dragStartCenter.X - deltaSrcX;
-            int newCenterY = dragStartCenter.Y - deltaSrcY;
+            int newCenterX = dragStartCenter.X - (int)Math.Round((double)deltaSrcX * zoomFactor);
+            int newCenterY = dragStartCenter.Y - (int)Math.Round((double)deltaSrcY * zoomFactor);
 
             // Clamp to image bounds
             newCenterX = Math.Max(pbw/2, Math.Min(newCenterX, fullImage.Width - 1 - pbw/2));
@@ -764,18 +777,44 @@ namespace PhotoFileViewer
                 {
                     using (var img = Image.FromStream(ms))
                     {
-                        // Create a copy (Bitmap) so it does not depend on the stream
+
                         if (fullImage != null)
                         {
                             var old = fullImage;
                             fullImage = null;
                             old.Dispose();
                         }
-                        fullImage = new Bitmap(img);
 
-                        // Default clip center is image center
-                        fullImageClipCenter = new Point(fullImage.Width /2, fullImage.Height /2);
+                        if (originalImage != null)
+                        {
+                            var old = originalImage;
+                            originalImage = null;
+                            old.Dispose();
+                        }
 
+                        // Create a copy (Bitmap) so it does not depend on the stream
+                        originalImage = new Bitmap(img);
+
+                        // Create a new fullImage twice as large in each dimension, filled with black,
+                        // and draw the original image centered inside it.
+                        int max = Math.Max(originalImage.Width, originalImage.Height);
+                        int fullW = max * 2;
+                        int fullH = max * 2;
+                        var big = new Bitmap(fullW, fullH);
+                        using (var g = Graphics.FromImage(big))
+                        {
+                            g.Clear(Color.Black);
+                            int offsetX = (fullW - originalImage.Width) / 2;
+                            int offsetY = (fullH - originalImage.Height) / 2;
+                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(originalImage, offsetX, offsetY, originalImage.Width, originalImage.Height);
+                        }
+
+                        fullImageClipCenter = new Point(fullW / 2, fullH / 2);
+
+                        // Set fullImage to the constructed large bitmap and dispose the temporary original
+                        fullImage = big;
+ 
                         updatePictureBoxImage();
                     }
                 }
