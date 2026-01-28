@@ -40,7 +40,7 @@ namespace PhotoFileViewer
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
         // Zoom factor (integer). Increases by1 each time Zoom Out is pressed.
-        private int zoomFactor =1;
+        private double zoomFactor = 1.0;
         // Dragging state for clip-center panning
         private bool isDraggingClip = false;
         private Point dragStartMouse;
@@ -226,10 +226,33 @@ namespace PhotoFileViewer
             {
                 try
                 {
-                    // Increase zoomFactor by1 each time
-                    zoomFactor +=10;
-                    UpdateStatus($"Zoom factor: {zoomFactor}");
+                    // Increase zoomFactor by 0.1 each time
+                    zoomFactor += 0.1;
+                    UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
                     // Refresh the displayed image in case zoomFactor is used elsewhere
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error adjusting zoom: {ex.Message}");
+                }
+            };
+
+            // Zoom In button (decrease zoomFactor)
+            var zoomInButton = new Button
+            {
+                Text = "Zoom In",
+                AutoSize = true,
+                Margin = new Padding(0,4,8,4)
+            };
+            zoomInButton.Click += (s, e) =>
+            {
+                try
+                {
+                    // Decrease zoomFactor by0.1 each time, but do not go below0.1
+                    zoomFactor = Math.Max(0.1, zoomFactor -0.1);
+                    UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
                     updatePictureBoxImage();
                     pictureBox.Refresh();
                 }
@@ -243,6 +266,7 @@ namespace PhotoFileViewer
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
+            flow.Controls.Add(zoomInButton);
             flow.Controls.Add(zoomOutButton);
             controlPanel.Controls.Add(flow);
 
@@ -284,7 +308,7 @@ namespace PhotoFileViewer
                 pictureBox.Refresh();
             };
 
-            // Allow click+drag on the picture to pan the clip center
+            // Allow click+drag on the picture to pan the clip-center
             pictureBox.MouseDown += PictureBox_MouseDown;
             pictureBox.MouseMove += PictureBox_MouseMove;
             pictureBox.MouseUp += PictureBox_MouseUp;
@@ -504,7 +528,9 @@ namespace PhotoFileViewer
                 if (pbw > 0 && pbh > 0)
                 {
                     // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
-                    Rectangle srcArea = justifyRectangleInImage(fullImage, fullImageClipCenter, pbw + zoomFactor, pbh + zoomFactor);
+                    Rectangle srcArea = justifyRectangleInImage(fullImage, fullImageClipCenter,
+                        (int)Math.Round((double)pbw * zoomFactor), 
+                        (int)Math.Round((double)pbh * zoomFactor));
                     Rectangle dstArea = new Rectangle(0, 0, pbw, pbh);
 
                     pictureBox.Image = ZoomImage(fullImage, srcArea, dstArea);
