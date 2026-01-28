@@ -39,6 +39,8 @@ namespace PhotoFileViewer
         private Image fullImage;
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
+        // Zoom factor (integer). Increases by1 each time Zoom Out is pressed.
+        private int zoomFactor =1;
         // Dragging state for clip-center panning
         private bool isDraggingClip = false;
         private Point dragStartMouse;
@@ -60,7 +62,35 @@ namespace PhotoFileViewer
             // Start listening for files from other instances
             Task.Run(() => ListenForFiles());
         }
+        private Rectangle justifyRectangleInImage(Image source, Point center, int w, int h)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            // Clamp rect to image bounds
 
+            Rectangle srcArea = new Rectangle(center.X - w / 2, center.Y - h / 2, w, h);
+
+            if (srcArea.IsEmpty || srcArea.Width <= 0 || srcArea.Height <= 0 ||
+                srcArea.Width > source.Width || srcArea.Height > source.Height)
+            {
+                return Rectangle.Empty;
+            }
+            
+            if (srcArea.X < 0) srcArea.X = 0;
+            if (srcArea.Y < 0) srcArea.Y = 0;
+
+            if (srcArea.X + srcArea.Width > source.Width) srcArea.X = source.Width - srcArea.Width;
+            if (srcArea.Y + srcArea.Height > source.Height) srcArea.Y = source.Height - srcArea.Height;
+
+            Rectangle imgBounds = new Rectangle(0, 0, source.Width, source.Height);
+            Rectangle justified = Rectangle.Intersect(imgBounds, srcArea);
+
+            if (justified.IsEmpty || justified.Width <= 0 || justified.Height <= 0)
+            {
+                return Rectangle.Empty;
+            }
+            return justified;
+
+        }
         private void InitializeComponent()
         {
             this.Text = "Photo File Viewer";
@@ -185,10 +215,35 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Zoom Out button to the right of Rotate button
+            var zoomOutButton = new Button
+            {
+                Text = "Zoom Out",
+                AutoSize = true,
+                Margin = new Padding(0,4,8,4)
+            };
+            zoomOutButton.Click += (s, e) =>
+            {
+                try
+                {
+                    // Increase zoomFactor by1 each time
+                    zoomFactor +=10;
+                    UpdateStatus($"Zoom factor: {zoomFactor}");
+                    // Refresh the displayed image in case zoomFactor is used elsewhere
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error adjusting zoom: {ex.Message}");
+                }
+            };
+
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
+            flow.Controls.Add(zoomOutButton);
             controlPanel.Controls.Add(flow);
 
             // Status label (will be in bottom row)
@@ -449,19 +504,11 @@ namespace PhotoFileViewer
                 if (pbw > 0 && pbh > 0)
                 {
                     // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
-                    int srcW = Math.Min(fullImage.Width, pbw);
-                    int srcH = Math.Min(fullImage.Height, pbh);
+                    Rectangle srcArea = justifyRectangleInImage(fullImage, fullImageClipCenter, pbw + zoomFactor, pbh + zoomFactor);
+                    Rectangle dstArea = new Rectangle(0, 0, pbw, pbh);
 
-                    int srcX = fullImageClipCenter.X - srcW / 2;
-                    int srcY = fullImageClipCenter.Y - srcH / 2;
-
-                    // Clamp (shouldn't be necessary but safe)
-                    if (srcX < 0) srcX = 0;
-                    if (srcY < 0) srcY = 0;
-                    if (srcX + srcW > fullImage.Width) srcW = fullImage.Width - srcX;
-                    if (srcY + srcH > fullImage.Height) srcH = fullImage.Height - srcY;
-
-                    pictureBox.Image = ClipImage(fullImage, new Rectangle(srcX, srcY, srcW, srcH));
+                    pictureBox.Image = ZoomImage(fullImage, srcArea, dstArea);
+                    //pictureBox.Image = ClipImage(fullImage, srcArea);
                 }
             }
         }
@@ -632,39 +679,25 @@ namespace PhotoFileViewer
             return bmp;
         }
 
-        // Zoom the image around the given center. Takes a source image, a center point (in source coordinates),
-        // an input region size (inXSize x inYSize) to sample around the center, and a zoomFactor.
-        // Produces a new Image whose size is (inXSize * zoomFactor, inYSize * zoomFactor) containing
-        // the sampled region scaled to the output size.
-        private Image ZoomImage(Image source, Point center, int inXSize, int inYSize, double zoomFactor)
+        // Zoom the image around the given center. Takes and area of the source (srcArea) and make returns a new image
+        // the size of the destination area (dstArea).
+        private Image ZoomImage(Image source, Rectangle srcArea, Rectangle dstArea)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
-            if (inXSize <= 0 || inYSize <= 0) throw new ArgumentException("inXSize and inYSize must be >0");
-            if (zoomFactor <= 0) throw new ArgumentException("zoomFactor must be >0");
 
-            // Determine source rectangle centered on `center` with requested input size.
-            int srcW = Math.Min(inXSize, source.Width);
-            int srcH = Math.Min(inYSize, source.Height);
+            if ((dstArea.Width/dstArea.Height) != (srcArea.Width/srcArea.Height))
+            {
+                // Aspect ratios do not match; cannot scale properly
+                return null;
+            }
 
-            int srcX = center.X - srcW / 2;
-            int srcY = center.Y - srcH / 2;
-
-            // Clamp to source bounds
-            if (srcX < 0) srcX = 0;
-            if (srcY < 0) srcY = 0;
-            if (srcX + srcW > source.Width) srcX = Math.Max(0, source.Width - srcW);
-            if (srcY + srcH > source.Height) srcY = Math.Max(0, source.Height - srcH);
-
-            int destW = Math.Max(1, (int)Math.Round(inXSize * zoomFactor));
-            int destH = Math.Max(1, (int)Math.Round(inYSize * zoomFactor));
-
-            var bmp = new Bitmap(destW, destH);
+            var bmp = new Bitmap(dstArea.Width, dstArea.Height);
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.CompositingQuality = CompositingQuality.HighQuality;
-                g.DrawImage(source, new Rectangle(0, 0, destW, destH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+                g.DrawImage(source, dstArea, srcArea, GraphicsUnit.Pixel);
             }
 
             return bmp;
