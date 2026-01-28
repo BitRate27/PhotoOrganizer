@@ -63,6 +63,16 @@ namespace PhotoFileViewer
             // Start listening for files from other instances
             Task.Run(() => ListenForFiles());
         }
+
+        double maxZoomFactor(Image image, int w, int h)
+        {
+            // Compute zoomFactor so that the full original image fits into the picture box
+            double fx = image.Width / (double)w;
+            double fy = image.Height / (double)h;
+            double target = Math.Max(fx, fy);
+            return target;
+        }
+
         private Rectangle justifyRectangleInImage(Image source, Point center, int w, int h)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
@@ -152,6 +162,10 @@ namespace PhotoFileViewer
                     {
                         // Flip horizontally
                         fullImage.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                        if (originalImage != null)
+                        {
+                            originalImage.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                        }
                         fullImageClipCenter = new Point(fullImage.Width - fullImageClipCenter.X, fullImageClipCenter.Y);
                         updatePictureBoxImage();
                         pictureBox.Refresh();
@@ -189,6 +203,10 @@ namespace PhotoFileViewer
                         int oldHeight = fullImage.Height;
 
                         fullImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                        if (originalImage != null)
+                        {
+                            originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                        }
 
                         // After rotating 90° clockwise, a point at (x,y) in the old image
                         // maps to (y, oldWidth -1 - x) in the rotated image.
@@ -275,12 +293,56 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Show All button to fit the original image into the picture box
+            var showAllButton = new Button
+            {
+                Text = "Show All",
+                AutoSize = true,
+                Margin = new Padding(0,4,8,4)
+            };
+            showAllButton.Click += (s, e) =>
+            {
+                try
+                {
+                    if (originalImage == null || pictureBox == null) {
+                        UpdateStatus("No image to fit");
+                        return;
+                    }
+
+                    int pbw = pictureBox.ClientSize.Width;
+                    int pbh = pictureBox.ClientSize.Height;
+                    if (pbw <=0 || pbh <= 0)
+                    {
+                        UpdateStatus("Invalid picture box size");
+                        return;
+                    }
+
+                    // Compute zoomFactor so that the original image fits into the picture box
+                    zoomFactor = maxZoomFactor(originalImage, pbw, pbh);
+
+                    // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
+                    if (fullImage != null)
+                    {
+                        fullImageClipCenter = new Point(fullImage.Width /2, fullImage.Height /2);
+                    }
+
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                    UpdateStatus($"Show All — zoomFactor set: {zoomFactor:0.00}");
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error fitting image: {ex.Message}");
+                }
+            };
+
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
             flow.Controls.Add(zoomInButton);
             flow.Controls.Add(zoomOutButton);
+            flow.Controls.Add(showAllButton);
             controlPanel.Controls.Add(flow);
 
             // Status label (will be in bottom row)
@@ -317,6 +379,12 @@ namespace PhotoFileViewer
             // When the picture box size changes, regenerate the clipped image so it matches new size
             this.Resize += (s, e) =>
             {
+                // Compute zoomFactor so that the original image fits into the new picture box
+                double max = maxZoomFactor(originalImage, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
+
+                // Ensure a sensible zoomFactor
+                zoomFactor = Math.Min(zoomFactor, max);
+
                 updatePictureBoxImage();
                 pictureBox.Refresh();
             };
@@ -540,6 +608,13 @@ namespace PhotoFileViewer
                 int pbh = pictureBox.ClientSize.Height;
                 if (pbw > 0 && pbh > 0)
                 {
+                    // Re-adjust zoomFactor to account for new pictureBox size
+                    // Compute zoomFactor so that the original image fits into the picture box
+                    double max = maxZoomFactor(originalImage, pbw, pbh);
+
+                    // Ensure a sensible zoomFactor
+                    zoomFactor = Math.Min(zoomFactor, max);
+
                     // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
                     Rectangle srcArea = justifyRectangleInImage(fullImage, fullImageClipCenter,
                         (int)Math.Round((double)pbw * zoomFactor), 
