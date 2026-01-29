@@ -3,7 +3,6 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Pipes;
-using System.Runtime.Remoting;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,8 +41,10 @@ namespace PhotoFileViewer
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
 
-        // Zoom factor increases/decreases by 0.1 each time zoom is pressed
-        private double zoomFactor = 1.0;
+        // Zoom factor increases/decreases by0.1 each time zoom is pressed
+        private double zoomFactor =1.0;
+        // Settings file path for persisting user preferences (JSON)
+        private readonly string settingsFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhotoOrganizer", "settings.json");
 
         // Dragging state for clip-center panning
         private bool isDraggingClip = false;
@@ -53,6 +54,8 @@ namespace PhotoFileViewer
         public PhotoViewerForm(string initialFile)
         {
             InitializeComponent();
+            // Load persisted settings after UI is initialized
+            LoadUserSettings();
 
             if (!string.IsNullOrEmpty(initialFile))
             {
@@ -145,8 +148,12 @@ namespace PhotoFileViewer
                 if (!string.IsNullOrEmpty(selected))
                 {
                     UpdateStatus($"Aspect set: {selected}");
-                    // redraw overlay when aspect changes
-                    pictureBox.Invalidate();
+                    overlayRectangle = computeOverlayRectangle(selected, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+
+                    // persist aspect selection
+                    SaveUserSettings();
                 }
             };
 
@@ -249,7 +256,6 @@ namespace PhotoFileViewer
                 try
                 {
                     // Increase zoomFactor by 0.1 each time
-
                     if ((zoomFactor + 0.1) < maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height))
                     {
                         zoomFactor += 0.1;
@@ -374,12 +380,15 @@ namespace PhotoFileViewer
                 // Recompute overlay rectangle using current aspect selection and new pictureBox size
                 overlayRectangle = computeOverlayRectangle(aspectComboBox.SelectedItem as string, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
 
-                // Compute zoomFactor limit based on new overlay size so we don't exceed source bounds
-                double max = maxZoomFactor(originalImage, overlayRectangle.Width >0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
-                overlayRectangle.Height >0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
+                if (originalImage != null)
+                {
+                    // Compute zoomFactor limit based on new overlay size so we don't exceed source bounds
+                    double max = maxZoomFactor(originalImage, overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                    overlayRectangle.Height > 0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
 
-                // Ensure a sensible zoomFactor
-                zoomFactor = Math.Min(zoomFactor, max);
+                    // Ensure a sensible zoomFactor
+                    zoomFactor = Math.Min(zoomFactor, max);
+                }
 
                 updatePictureBoxImage();
                 pictureBox.Refresh();
@@ -461,6 +470,8 @@ namespace PhotoFileViewer
                         storageFolderPath = dlg.SelectedPath;
                         storageFolderTextBox.Text = storageFolderPath;
                         UpdateStatus($"Storage folder set: {storageFolderPath}");
+                        // persist storage folder
+                        SaveUserSettings();
                     }
                 }
             };
@@ -638,7 +649,8 @@ namespace PhotoFileViewer
             updatePictureBoxImage();
             pictureBox.Refresh();
 
-            this.FormClosing += (s, e) => isRunning = false;
+            this.SizeChanged += (s, e) => { SaveUserSettings(); };
+            this.FormClosing += (s, e) => { SaveUserSettings(); isRunning = false; };
         }
         private void updatePictureBoxImage()
         {
@@ -1078,6 +1090,129 @@ namespace PhotoFileViewer
             {
                 return false;
             }
+        }
+
+        private void LoadUserSettings()
+        {
+            try
+            {
+                if (!File.Exists(settingsFilePath)) return;
+                var json = File.ReadAllText(settingsFilePath);
+                string folder = ReadJsonString(json, "StorageFolderPath");
+                if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
+                {
+                    storageFolderPath = folder;
+                    try { storageFolderTextBox.Text = storageFolderPath; } catch { }
+                }
+
+                string aspect = ReadJsonString(json, "Aspect");
+                if (!string.IsNullOrEmpty(aspect))
+                {
+                    for (int i =0; i < aspectComboBox.Items.Count; i++)
+                    {
+                        if (string.Equals(aspectComboBox.Items[i].ToString(), aspect, StringComparison.OrdinalIgnoreCase))
+                        {
+                            aspectComboBox.SelectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                int fw = ReadJsonInt(json, "FormWidth",0);
+                int fh = ReadJsonInt(json, "FormHeight",0);
+                if (fw >100 && fh >100)
+                {
+                    this.Size = new Size(fw, fh);
+                }
+            }
+            catch
+            {
+                // ignore load errors
+            }
+        }
+
+        private void SaveUserSettings()
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(settingsFilePath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string aspect = aspectComboBox.SelectedItem as string ?? string.Empty;
+                string json = "{" +
+                "\"StorageFolderPath\":" + JsonString(storageFolderPath) + "," +
+                "\"Aspect\":" + JsonString(aspect) + "," +
+                "\"FormWidth\":" + this.Size.Width + "," +
+                "\"FormHeight\":" + this.Size.Height +
+                "}";
+                File.WriteAllText(settingsFilePath, json);
+            }
+            catch
+            {
+                // ignore save errors
+            }
+        }
+        
+        private static string JsonString(string s)
+        {
+            if (s == null) return "\"\"";
+            var esc = s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+            return "\"" + esc + "\"";
+        }
+        
+        private static string ReadJsonString(string json, string key)
+        {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return string.Empty;
+            var token = "\"" + key + "\"";
+            int idx = json.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+            if (idx <0) return string.Empty;
+            int colon = json.IndexOf(':', idx + token.Length);
+            if (colon <0) return string.Empty;
+            int i = colon +1;
+            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+            if (i >= json.Length) return string.Empty;
+            if (json[i] != '"') return string.Empty;
+            i++; // skip opening quote
+            var sb = new StringBuilder();
+            bool escape = false;
+            for (; i < json.Length; i++)
+            {
+                char c = json[i];
+                if (escape)
+                {
+                    if (c == '"') sb.Append('"');
+                    else if (c == '\\') sb.Append('\\');
+                    else if (c == 'n') sb.Append('\n');
+                    else if (c == 'r') sb.Append('\r');
+                    else sb.Append(c);
+                    escape = false;
+                }
+                else
+                {
+                    if (c == '\\') { escape = true; continue; }
+                    if (c == '"') break;
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
+        }
+        
+        private static int ReadJsonInt(string json, string key, int defaultValue)
+        {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return defaultValue;
+            var token = "\"" + key + "\"";
+            int idx = json.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+            if (idx <0) return defaultValue;
+            int colon = json.IndexOf(':', idx + token.Length);
+            if (colon <0) return defaultValue;
+            int i = colon +1;
+            while (i < json.Length && (char.IsWhiteSpace(json[i]) || json[i]==',')) i++;
+            int start = i;
+            while (i < json.Length && (char.IsDigit(json[i]) || json[i]=='-')) i++;
+            if (i > start)
+            {
+                if (int.TryParse(json.Substring(start, i - start), out int v)) return v;
+            }
+            return defaultValue;
         }
     }
 
