@@ -44,6 +44,8 @@ namespace PhotoFileViewer
 
         // Zoom factor increases/decreases by0.1 each time zoom is pressed
         private double zoomFactor =1.0;
+        // Save resolution option (High/Low)
+        private string saveResolution = "High";
         // Settings file path for persisting user preferences (JSON)
         private readonly string settingsFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PhotoOrganizer", "settings.json");
 
@@ -138,10 +140,10 @@ namespace PhotoFileViewer
             aspectComboBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 80,
-                Margin = new Padding(0, 6, 8, 6)
+                Width =80,
+                Margin = new Padding(0,6,8,6)
             };
-            aspectComboBox.Items.AddRange(new object[] { "16:9", "9:16", "Square" });
+            aspectComboBox.Items.AddRange(new object[] { "16:9", "4:5", "Square" });
             aspectComboBox.SelectedIndex = 0; // default to 16:9
             aspectComboBox.SelectedIndexChanged += (s, e) =>
             {
@@ -155,6 +157,24 @@ namespace PhotoFileViewer
 
                     // persist aspect selection
                     SaveUserSettings();
+                }
+            };
+
+            // Resolution selector placed next to aspect selector
+            var resolutionComboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width =80,
+                Margin = new Padding(0,6,8,6)
+            };
+            resolutionComboBox.Items.AddRange(new object[] { "High", "Low" });
+            resolutionComboBox.SelectedIndex =0; // default High
+            resolutionComboBox.SelectedIndexChanged += (s, e) =>
+            {
+                var sel = resolutionComboBox.SelectedItem as string;
+                if (!string.IsNullOrEmpty(sel))
+                {
+                    saveResolution = sel;
                 }
             };
 
@@ -337,6 +357,7 @@ namespace PhotoFileViewer
 
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
+            flow.Controls.Add(resolutionComboBox);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
             flow.Controls.Add(zoomInButton);
@@ -717,6 +738,58 @@ namespace PhotoFileViewer
             return new Rectangle(x, y, rectW, rectH);
         }
 
+        // Returns a Rectangle with width and height chosen from fixed presets
+        // based on the aspect ratio string and resolution string.
+        // Aspect may be e.g. "16:9", "9:16", "Square", "4:5" (case-insensitive).
+        // Resolution is "High" or "Low" (case-insensitive).
+        private Rectangle GetFixedResolutionRect(string aspect, string resolution)
+        {
+            if (string.IsNullOrEmpty(aspect) || string.IsNullOrEmpty(resolution))
+                return Rectangle.Empty;
+
+            string a = aspect.Trim();
+            string r = resolution.Trim();
+
+            bool high = r.Equals("High", StringComparison.OrdinalIgnoreCase);
+
+            int w = 0, h = 0;
+
+            if (a.Equals("16:9", StringComparison.OrdinalIgnoreCase))
+            {
+                if (high) { w = 3840; h = 2160; }
+                else { w = 1920; h = 1080; }
+            }
+            else if (a.Equals("9:16", StringComparison.OrdinalIgnoreCase))
+            {
+                // portrait version of16:9
+                if (high) { w = 2160; h = 3840; }
+                else { w = 1080; h = 1920; }
+            }
+            else if (a.Equals("Square", StringComparison.OrdinalIgnoreCase))
+            {
+                if (high) { w = 2048; h = 2048; }
+                else { w = 1080; h = 1080; }
+            }
+            else if (a.Equals("4:5", StringComparison.OrdinalIgnoreCase))
+            {
+                // portrait4:5 (width smaller)
+                if (high) { w = 2160; h = 2700; }
+                else { w = 1080; h = 1350; }
+            }
+            else if (a.Equals("5:4", StringComparison.OrdinalIgnoreCase))
+            {
+                // landscape5:4 (swap4:5)
+                if (high) { w = 2700; h = 2160; }
+                else { w = 1350; h = 1080; }
+            }
+            else
+            {
+                return Rectangle.Empty;
+            }
+
+            return new Rectangle(0, 0, w, h);
+        }
+        
         private void PictureBox_Paint(object sender, PaintEventArgs e)
         {
             try
@@ -1159,130 +1232,7 @@ namespace PhotoFileViewer
             public string Aspect { get; set; }
             public int FormWidth { get; set; }
             public int FormHeight { get; set; }
-        }
-        
-        private void LoadUserSettingsLegacy()
-        {
-            try
-            {
-                if (!File.Exists(settingsFilePath)) return;
-                var json = File.ReadAllText(settingsFilePath);
-                string folder = ReadJsonString(json, "StorageFolderPath");
-                if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
-                {
-                    storageFolderPath = folder;
-                    try { storageFolderTextBox.Text = storageFolderPath; } catch { }
-                }
-
-                string aspect = ReadJsonString(json, "Aspect");
-                if (!string.IsNullOrEmpty(aspect))
-                {
-                    for (int i =0; i < aspectComboBox.Items.Count; i++)
-                    {
-                        if (string.Equals(aspectComboBox.Items[i].ToString(), aspect, StringComparison.OrdinalIgnoreCase))
-                        {
-                            aspectComboBox.SelectedIndex = i;
-                            break;
-                        }
-                    }
-                }
-
-                int fw = ReadJsonInt(json, "FormWidth",0);
-                int fh = ReadJsonInt(json, "FormHeight",0);
-                if (fw >100 && fh >100)
-                {
-                    this.Size = new Size(fw, fh);
-                }
-            }
-            catch
-            {
-                // ignore load errors
-            }
-        }
-
-        private void SaveUserSettingsLegacy()
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(settingsFilePath);
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                string aspect = aspectComboBox.SelectedItem as string ?? string.Empty;
-                string json = "{" +
-                "\"StorageFolderPath\":" + JsonString(storageFolderPath) + "," +
-                "\"Aspect\":" + JsonString(aspect) + "," +
-                "\"FormWidth\":" + this.Size.Width + "," +
-                "\"FormHeight\":" + this.Size.Height +
-                "}";
-                File.WriteAllText(settingsFilePath, json);
-            }
-            catch
-            {
-                // ignore save errors
-            }
-        }
-        
-        private static string JsonString(string s)
-        {
-            if (s == null) return "\"\"";
-            var esc = s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
-            return "\"" + esc + "\"";
-        }
-        
-        private static string ReadJsonString(string json, string key)
-        {
-            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return string.Empty;
-            var token = "\"" + key + "\"";
-            int idx = json.IndexOf(token, StringComparison.OrdinalIgnoreCase);
-            if (idx <0) return string.Empty;
-            int colon = json.IndexOf(':', idx + token.Length);
-            if (colon <0) return string.Empty;
-            int i = colon +1;
-            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
-            if (i >= json.Length) return string.Empty;
-            if (json[i] != '"') return string.Empty;
-            i++; // skip opening quote
-            var sb = new StringBuilder();
-            bool escape = false;
-            for (; i < json.Length; i++)
-            {
-                char c = json[i];
-                if (escape)
-                {
-                    if (c == '"') sb.Append('"');
-                    else if (c == '\\') sb.Append('\\');
-                    else if (c == 'n') sb.Append('\n');
-                    else if (c == 'r') sb.Append('\r');
-                    else sb.Append(c);
-                    escape = false;
-                }
-                else
-                {
-                    if (c == '\\') { escape = true; continue; }
-                    if (c == '"') break;
-                    sb.Append(c);
-                }
-            }
-            return sb.ToString();
-        }
-        
-        private static int ReadJsonInt(string json, string key, int defaultValue)
-        {
-            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return defaultValue;
-            var token = "\"" + key + "\"";
-            int idx = json.IndexOf(token, StringComparison.OrdinalIgnoreCase);
-            if (idx <0) return defaultValue;
-            int colon = json.IndexOf(':', idx + token.Length);
-            if (colon <0) return defaultValue;
-            int i = colon +1;
-            while (i < json.Length && (char.IsWhiteSpace(json[i]) || json[i]==',')) i++;
-            int start = i;
-            while (i < json.Length && (char.IsDigit(json[i]) || json[i]=='-')) i++;
-            if (i > start)
-            {
-                if (int.TryParse(json.Substring(start, i - start), out int v)) return v;
-            }
-            return defaultValue;
-        }
+        } 
     }
 
     static class Program
