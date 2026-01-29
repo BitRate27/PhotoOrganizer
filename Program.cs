@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing.Imaging;
+using Newtonsoft.Json;
 
 namespace PhotoFileViewer
 {
@@ -1098,6 +1099,74 @@ namespace PhotoFileViewer
             {
                 if (!File.Exists(settingsFilePath)) return;
                 var json = File.ReadAllText(settingsFilePath);
+                var settings = JsonConvert.DeserializeObject<UserSettings>(json);
+                if (settings == null) return;
+
+                if (!string.IsNullOrEmpty(settings.StorageFolderPath) && Directory.Exists(settings.StorageFolderPath))
+                {
+                    storageFolderPath = settings.StorageFolderPath;
+                    try { storageFolderTextBox.Text = storageFolderPath; } catch { }
+                }
+
+                if (!string.IsNullOrEmpty(settings.Aspect))
+                {
+                    for (int i =0; i < aspectComboBox.Items.Count; i++)
+                    {
+                        if (string.Equals(aspectComboBox.Items[i].ToString(), settings.Aspect, StringComparison.OrdinalIgnoreCase))
+                        {
+                            aspectComboBox.SelectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (settings.FormWidth >100 && settings.FormHeight >100)
+                {
+                    this.Size = new Size(settings.FormWidth, settings.FormHeight);
+                }
+            }
+            catch
+            {
+                // ignore load errors
+            }
+        }
+
+        private void SaveUserSettings()
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(settingsFilePath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                var settings = new UserSettings
+                {
+                    StorageFolderPath = storageFolderPath ?? string.Empty,
+                    Aspect = aspectComboBox.SelectedItem as string ?? string.Empty,
+                    FormWidth = this.Size.Width,
+                    FormHeight = this.Size.Height
+                };
+                var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
+                File.WriteAllText(settingsFilePath, json);
+            }
+            catch
+            {
+                // ignore save errors
+            }
+        }
+
+        private class UserSettings
+        {
+            public string StorageFolderPath { get; set; }
+            public string Aspect { get; set; }
+            public int FormWidth { get; set; }
+            public int FormHeight { get; set; }
+        }
+        
+        private void LoadUserSettingsLegacy()
+        {
+            try
+            {
+                if (!File.Exists(settingsFilePath)) return;
+                var json = File.ReadAllText(settingsFilePath);
                 string folder = ReadJsonString(json, "StorageFolderPath");
                 if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
                 {
@@ -1131,7 +1200,7 @@ namespace PhotoFileViewer
             }
         }
 
-        private void SaveUserSettings()
+        private void SaveUserSettingsLegacy()
         {
             try
             {
