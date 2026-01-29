@@ -1,14 +1,15 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Drawing.Imaging;
-using Newtonsoft.Json;
+using static System.Windows.Forms.MonthCalendar;
 
 namespace PhotoFileViewer
 {
@@ -28,6 +29,7 @@ namespace PhotoFileViewer
         // New control panel and aspect selector
         private Panel controlPanel;
         private ComboBox aspectComboBox;
+        private ComboBox resolutionComboBox;
 
         // Keep track of currently opened file path
         private string currentFilePath;
@@ -161,7 +163,7 @@ namespace PhotoFileViewer
             };
 
             // Resolution selector placed next to aspect selector
-            var resolutionComboBox = new ComboBox
+            resolutionComboBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width =80,
@@ -524,52 +526,17 @@ namespace PhotoFileViewer
                         return;
                     }
 
-                    // Determine mapping from PictureBox client coords to image pixels
-                    var srcImg = pictureBox.Image as Image;
-                    int imgW = srcImg.Width;
-                    int imgH = srcImg.Height;
+                    Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
 
-                    int pbW = pictureBox.ClientSize.Width;
-                    int pbH = pictureBox.ClientSize.Height;
+                    Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
+                        resolutionComboBox.SelectedItem as string);
 
-                    double scale = Math.Min((double)pbW / imgW, (double)pbH / imgH);
-                    int dispW = (int)Math.Round(imgW * scale);
-                    int dispH = (int)Math.Round(imgH * scale);
-                    int offsetX = (pbW - dispW) / 2;
-                    int offsetY = (pbH - dispH) / 2;
+                    Image saveImage = ZoomImage(fullImage, srcRect, dstRect);
 
-                    // Intersection of overlay rectangle with displayed image area
-                    var imageRect = new Rectangle(offsetX, offsetY, dispW, dispH);
-                    var intersect = Rectangle.Intersect(overlayRectangle, imageRect);
-                    if (intersect.IsEmpty)
-                    {
-                        MessageBox.Show(this, "Selected overlay does not intersect the image.", "Nothing to save", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
-
-                    // Map to source image pixels
-                    double invScale = 1.0 / scale;
-                    int srcX = (int)Math.Floor((intersect.X - offsetX) * invScale);
-                    int srcY = (int)Math.Floor((intersect.Y - offsetY) * invScale);
-                    int srcW = (int)Math.Ceiling(intersect.Width * invScale);
-                    int srcH = (int)Math.Ceiling(intersect.Height * invScale);
-
-                    // Clamp to image bounds
-                    srcX = Math.Max(0, Math.Min(srcX, imgW - 1));
-                    srcY = Math.Max(0, Math.Min(srcY, imgH - 1));
-                    if (srcX + srcW > imgW) srcW = imgW - srcX;
-                    if (srcY + srcH > imgH) srcH = imgH - srcY;
-                    if (srcW <= 0 || srcH <= 0)
-                    {
-                        MessageBox.Show(this, "Computed crop is empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return;
-                    }
-
-                    // Crop and save
-                    using (var bmp = new Bitmap(srcW, srcH))
+                    using (var bmp = new Bitmap(dstRect.Width, dstRect.Height))
                     using (var g = Graphics.FromImage(bmp))
                     {
-                        g.DrawImage(srcImg, new Rectangle(0,0, srcW, srcH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+                        g.DrawImage(saveImage, dstRect, dstRect, GraphicsUnit.Pixel);
 
                         // Copy original metadata into the saved bitmap if available
                         if (originalPropertyItems != null)
@@ -814,6 +781,21 @@ namespace PhotoFileViewer
                 int rectW = overlayRectangle.Width;
                 int rectH = overlayRectangle.Height;
 
+                Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
+
+                Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
+                    resolutionComboBox.SelectedItem as string);
+
+                // Show red border if the source rectangle is smaller than the destination rectangle
+                bool diminishedQuality = false;
+                if (originalImage != null)
+                {
+                    if (srcRect.Width < dstRect.Width || srcRect.Height < dstRect.Height)
+                    {
+                        diminishedQuality = true;
+                    }
+                }
+                
                 // Draw a semi-transparent border by filling the areas outside the inner rectangle.
                 // The inner rectangle remains fully transparent so the image shows through.
                 var overlayColor = Color.FromArgb(140,0,0,0); // semi-transparent black
@@ -829,7 +811,7 @@ namespace PhotoFileViewer
                     e.Graphics.FillRectangle(brush, x + rectW, y, w - (x + rectW), rectH);
                 }
                 // Optionally draw a thin border line to delineate the inner rectangle
-                using (var pen = new Pen(Color.FromArgb(200,255,255,255),1))
+                using (var pen = new Pen(diminishedQuality ? Color.Red : Color.FromArgb(200,255,255,255),1))
                 {
                     e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                     e.Graphics.DrawRectangle(pen, x, y, rectW -1, rectH -1);
@@ -953,6 +935,14 @@ namespace PhotoFileViewer
             }
 
             return bmp;
+        }
+        Rectangle GetOverlayRectangleOnFullImage(Rectangle overlayRect, Point fullImageCenter, double zoomFactor)
+        {
+            int srcW = (int)Math.Round((double)overlayRect.Width * zoomFactor);
+            int srcH = (int)Math.Round((double)overlayRect.Height * zoomFactor);
+            int srcX = fullImageCenter.X - (srcW / 2);
+            int srcY = fullImageCenter.Y - (srcH / 2);
+            return new Rectangle(srcX, srcY, srcW, srcH);
         }
 
         public void OpenFile(string filePath)
