@@ -365,11 +365,15 @@ namespace PhotoFileViewer
             // Paint overlay and handle resize
             pictureBox.Paint += PictureBox_Paint;
 
-            // When the picture box size changes, regenerate the clipped image so it matches new size
+            // When the form is resized, recompute the overlay rectangle and regenerate the image
             this.Resize += (s, e) =>
             {
-                // Compute zoomFactor so that the original image fits into the new picture box
-                double max = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                // Recompute overlay rectangle using current aspect selection and new pictureBox size
+                overlayRectangle = computeOverlayRectangle(aspectComboBox.SelectedItem as string, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
+
+                // Compute zoomFactor limit based on new overlay size so we don't exceed source bounds
+                double max = maxZoomFactor(originalImage, overlayRectangle.Width >0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                overlayRectangle.Height >0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
 
                 // Ensure a sensible zoomFactor
                 zoomFactor = Math.Min(zoomFactor, max);
@@ -580,6 +584,12 @@ namespace PhotoFileViewer
 
             this.Controls.Add(mainLayout);
 
+            // Compute initial overlay rectangle now that controls and sizes are set
+            overlayRectangle = computeOverlayRectangle(aspectComboBox.SelectedItem as string, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
+            // Ensure the image is rendered with the initial overlay
+            updatePictureBoxImage();
+            pictureBox.Refresh();
+
             this.FormClosing += (s, e) => isRunning = false;
         }
         private void updatePictureBoxImage()
@@ -594,11 +604,12 @@ namespace PhotoFileViewer
             {
                 int pbw = pictureBox.ClientSize.Width;
                 int pbh = pictureBox.ClientSize.Height;
+
                 if (pbw > 0 && pbh > 0)
                 {
                     // Re-adjust zoomFactor to account for new pictureBox size
                     // Compute zoomFactor so that the original image fits into the picture box
-                    double max = maxZoomFactor(originalImage, pbw, pbh);
+                    double max = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Ensure a sensible zoomFactor
                     zoomFactor = Math.Min(zoomFactor, max);
@@ -866,8 +877,8 @@ namespace PhotoFileViewer
                         // Create a new fullImage twice as large in each dimension, filled with black,
                         // and draw the original image centered inside it.
                         int max = Math.Max(originalImage.Width, originalImage.Height);
-                        int fullW = max * 2;
-                        int fullH = max * 2;
+                        int fullW = max * 3;
+                        int fullH = max * 3;
                         var big = new Bitmap(fullW, fullH);
                         using (var g = Graphics.FromImage(big))
                         {
