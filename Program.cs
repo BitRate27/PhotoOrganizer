@@ -31,17 +31,17 @@ namespace PhotoFileViewer
         // Keep track of currently opened file path
         private string currentFilePath;
 
-        // Store overlay rectangle so it can be accessed later
-        private int overlayX;
-        private int overlayY;
-        private int overlayWidth;
-        private int overlayHeight;
+        // Overlay rectangle so we can reference it when saving
+        private Rectangle overlayRectangle;
         private Image originalImage;
         private Image fullImage;
+
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
-        // Zoom factor (integer). Increases by1 each time Zoom Out is pressed.
+
+        // Zoom factor increases/decreases by 0.1 each time zoom is pressed
         private double zoomFactor = 1.0;
+
         // Dragging state for clip-center panning
         private bool isDraggingClip = false;
         private Point dragStartMouse;
@@ -246,11 +246,8 @@ namespace PhotoFileViewer
                 try
                 {
                     // Increase zoomFactor by 0.1 each time
-                    int pbw = pictureBox.Width;
-                    int pbh = pictureBox.Height;
 
-                    if ((pbw * (zoomFactor + 0.1) < fullImage.Width) &&
-                        (pbh * (zoomFactor + 0.1) < fullImage.Height))
+                    if ((zoomFactor + 0.1) < maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height))
                     {
                         zoomFactor += 0.1;
                         UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
@@ -260,8 +257,8 @@ namespace PhotoFileViewer
                         UpdateStatus($"Maximum Zoom factor: {zoomFactor:0.0}");
                     }    
 
-                        // Refresh the displayed image in case zoomFactor is used elsewhere
-                        updatePictureBoxImage();
+                    // Refresh the displayed image in case zoomFactor is used elsewhere
+                    updatePictureBoxImage();
                     pictureBox.Refresh();
                 }
                 catch (Exception ex)
@@ -309,16 +306,8 @@ namespace PhotoFileViewer
                         return;
                     }
 
-                    int pbw = pictureBox.ClientSize.Width;
-                    int pbh = pictureBox.ClientSize.Height;
-                    if (pbw <=0 || pbh <= 0)
-                    {
-                        UpdateStatus("Invalid picture box size");
-                        return;
-                    }
-
                     // Compute zoomFactor so that the original image fits into the picture box
-                    zoomFactor = maxZoomFactor(originalImage, pbw, pbh);
+                    zoomFactor = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
@@ -380,7 +369,7 @@ namespace PhotoFileViewer
             this.Resize += (s, e) =>
             {
                 // Compute zoomFactor so that the original image fits into the new picture box
-                double max = maxZoomFactor(originalImage, pictureBox.ClientSize.Width, pictureBox.ClientSize.Height);
+                double max = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
 
                 // Ensure a sensible zoomFactor
                 zoomFactor = Math.Min(zoomFactor, max);
@@ -510,9 +499,8 @@ namespace PhotoFileViewer
                     int offsetY = (pbH - dispH) / 2;
 
                     // Intersection of overlay rectangle with displayed image area
-                    var overlayRect = new Rectangle(overlayX, overlayY, overlayWidth, overlayHeight);
                     var imageRect = new Rectangle(offsetX, offsetY, dispW, dispH);
-                    var intersect = Rectangle.Intersect(overlayRect, imageRect);
+                    var intersect = Rectangle.Intersect(overlayRectangle, imageRect);
                     if (intersect.IsEmpty)
                     {
                         MessageBox.Show(this, "Selected overlay does not intersect the image.", "Nothing to save", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -626,10 +614,39 @@ namespace PhotoFileViewer
                 }
             }
         }
+        private Rectangle computeOverlayRectangle(string aspectRatio, int w, int h)
+        {
+            const int overlayPadding = 15;      
+            
+            double ratio = ParseAspectRatio(aspectRatio);
+            if (ratio <= 0)
+                return Rectangle.Empty;
+
+            // Determine maximum rectangle matching ratio that fits within w x h
+            double controlRatio = (double)w / h;
+            int rectW, rectH;
+            if (controlRatio > ratio)
+            {
+                // height limits
+                rectH = h - (overlayPadding * 2);
+                rectW = (int)Math.Round((h - (overlayPadding * 2)) * ratio);
+            }
+            else
+            {
+                // width limits
+                rectW = w - (overlayPadding * 2);
+                rectH = (int)Math.Round((w - (overlayPadding * 2)) / ratio);
+            }
+
+            int x = (w - rectW) / 2;
+            int y = (h - rectH) / 2;
+
+            // store overlay coordinates for future use
+            return new Rectangle(x, y, rectW, rectH);
+        }
 
         private void PictureBox_Paint(object sender, PaintEventArgs e)
         {
-            const int overlayPadding = 15;
             try
             {
                 int w = pictureBox.ClientSize.Width;
@@ -647,34 +664,10 @@ namespace PhotoFileViewer
                     e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0, 0, w, h));
                 }
 
-                double ratio = ParseAspectRatio(aspectComboBox.SelectedItem as string);
-                if (ratio <= 0)
-                    return;
-
-                // Determine maximum rectangle matching ratio that fits within w x h
-                double controlRatio = (double)w / h;
-                int rectW, rectH;
-                if (controlRatio > ratio)
-                {
-                    // height limits
-                    rectH = h - (overlayPadding * 2);
-                    rectW = (int)Math.Round((h - (overlayPadding * 2)) * ratio);
-                }
-                else
-                {
-                    // width limits
-                    rectW = w - (overlayPadding * 2);
-                    rectH = (int)Math.Round((w - (overlayPadding * 2)) / ratio);
-                }
-
-                int x = (w - rectW) / 2;
-                int y = (h - rectH) / 2;
-
-                // store overlay coordinates for future use
-                overlayX = x;
-                overlayY = y;
-                overlayWidth = rectW;
-                overlayHeight = rectH;
+                int x = overlayRectangle.X;
+                int y = overlayRectangle.Y;
+                int rectW = overlayRectangle.Width;
+                int rectH = overlayRectangle.Height;
 
                 // Draw a semi-transparent border by filling the areas outside the inner rectangle.
                 // The inner rectangle remains fully transparent so the image shows through.
