@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Drawing.Imaging;
 
 namespace PhotoFileViewer
 {
@@ -35,6 +36,8 @@ namespace PhotoFileViewer
         private Rectangle overlayRectangle;
         private Image originalImage;
         private Image fullImage;
+        // Store original image metadata (EXIF) property items
+        private PropertyItem[] originalPropertyItems;
 
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
@@ -533,7 +536,51 @@ namespace PhotoFileViewer
                     using (var bmp = new Bitmap(srcW, srcH))
                     using (var g = Graphics.FromImage(bmp))
                     {
-                        g.DrawImage(srcImg, new Rectangle(0, 0, srcW, srcH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+                        g.DrawImage(srcImg, new Rectangle(0,0, srcW, srcH), new Rectangle(srcX, srcY, srcW, srcH), GraphicsUnit.Pixel);
+
+                        // Copy original metadata into the saved bitmap if available
+                        if (originalPropertyItems != null)
+                        {
+                            foreach (var prop in originalPropertyItems)
+                            {
+                                if (prop == null) continue;
+                                try
+                                {
+                                    // Some property items may not be valid for the new image; ignore failures
+                                    bmp.SetPropertyItem(prop);
+                                }
+                                catch { }
+                            }
+                        }
+
+                        // Add ImageEditingSoftware (ID=42043) and ImageEditor (ID=42040)
+                        try
+                        {
+                            // Helper to create a PropertyItem instance without public ctor
+                            Func<int, short, byte[], PropertyItem> makeProp = (id, type, val) =>
+                            {
+                                var pi = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                                pi.Id = id;
+                                pi.Type = type;
+                                pi.Len = val?.Length ?? 0;
+                                pi.Value = val;
+                                return pi;
+                            };
+
+                            string software = "PhotoOrganizer (BitRate27)";
+                            byte[] softwareBytes = Encoding.ASCII.GetBytes(software + "\0");
+                            var softwareProp = makeProp(42043, 2, softwareBytes); // Type2 = ASCII
+                            try { bmp.SetPropertyItem(softwareProp); } catch { }
+
+                            string editor = Environment.UserName ?? string.Empty;
+                            byte[] editorBytes = Encoding.ASCII.GetBytes(editor + "\0");
+                            var editorProp = makeProp(42040, 2, editorBytes);
+                            try { bmp.SetPropertyItem(editorProp); } catch { }
+                        }
+                        catch
+                        {
+                            // ignore any failures creating/setting custom metadata
+                        }
 
                         string fileName = "image_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".jpg";
                         if (!string.IsNullOrEmpty(currentFilePath))
@@ -544,7 +591,8 @@ namespace PhotoFileViewer
                         string destPath = Path.Combine(storageFolderPath, fileName);
                         // Choose JPEG encoder to save; overwrite if exists
                         bmp.Save(destPath, System.Drawing.Imaging.ImageFormat.Jpeg);
-                        UpdateStatus($"Saved cropped image to: {destPath}");
+
+                   
                     }
                 }
                 catch (Exception ex)
@@ -873,6 +921,28 @@ namespace PhotoFileViewer
 
                         // Create a copy (Bitmap) so it does not depend on the stream
                         originalImage = new Bitmap(img);
+
+                        // Capture metadata (PropertyItems) from the original image, if any
+                        try
+                        {
+                            var ids = img.PropertyIdList;
+                            if (ids != null && ids.Length >0)
+                            {
+                                originalPropertyItems = new PropertyItem[ids.Length];
+                                for (int i =0; i < ids.Length; i++)
+                                {
+                                    try { originalPropertyItems[i] = img.GetPropertyItem(ids[i]); } catch { originalPropertyItems[i] = null; }
+                                }
+                            }
+                            else
+                            {
+                                originalPropertyItems = null;
+                            }
+                        }
+                        catch
+                        {
+                            originalPropertyItems = null;
+                        }
 
                         // Create a new fullImage twice as large in each dimension, filled with black,
                         // and draw the original image centered inside it.
