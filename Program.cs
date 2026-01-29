@@ -177,6 +177,8 @@ namespace PhotoFileViewer
                 if (!string.IsNullOrEmpty(sel))
                 {
                     saveResolution = sel;
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
                 }
             };
 
@@ -278,18 +280,13 @@ namespace PhotoFileViewer
             {
                 try
                 {
-                    // Increase zoomFactor by 0.1 each time
-                    if ((zoomFactor + 0.1) < maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height))
-                    {
-                        zoomFactor += 0.1;
-                        UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
-                    }
-                    else
-                    {
-                        UpdateStatus($"Maximum Zoom factor: {zoomFactor:0.0}");
-                    }    
+                    // multiplicative step so larger zooms change more
+                    double stepFactor =1.1; //10% per click
+                    double max = maxZoomFactor(originalImage ?? fullImage, overlayRectangle.Width >0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                    overlayRectangle.Height >0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
+                    zoomFactor = Math.Min(max, zoomFactor * stepFactor);
+                    UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
 
-                    // Refresh the displayed image in case zoomFactor is used elsewhere
                     updatePictureBoxImage();
                     pictureBox.Refresh();
                 }
@@ -310,9 +307,10 @@ namespace PhotoFileViewer
             {
                 try
                 {
-                    // Decrease zoomFactor by0.1 each time, but do not go below0.1
-                    zoomFactor = Math.Max(0.1, zoomFactor -0.1);
-                    UpdateStatus($"Zoom factor: {zoomFactor:0.0}");
+                    // multiplicative zoom in (reduce zoomFactor) so larger zooms change more
+                    double stepFactor =1.1;
+                    zoomFactor = Math.Max(0.1, zoomFactor / stepFactor);
+                    UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
                     updatePictureBoxImage();
                     pictureBox.Refresh();
                 }
@@ -392,11 +390,83 @@ namespace PhotoFileViewer
                 Location = new Point(0, 0),
                 // Will be stretched in the layout cell
                 Dock = DockStyle.Fill,
-                SizeMode = PictureBoxSizeMode.Zoom
+                SizeMode = PictureBoxSizeMode.Zoom,
+                TabStop = true
             };
 
             // Paint overlay and handle resize
             pictureBox.Paint += PictureBox_Paint;
+
+            // Ensure pictureBox can receive wheel events by giving it focus when the mouse enters
+            pictureBox.MouseEnter += (s, e) => { try { pictureBox.Focus(); } catch { } };
+
+            // Mouse wheel zoom (centered on cursor) — use multiplicative steps so larger zooms change more
+            pictureBox.MouseWheel += (s, e) =>
+            {
+                try
+                {
+                    if (fullImage == null) return;
+
+                    int pbW = pictureBox.ClientSize.Width;
+                    int pbH = pictureBox.ClientSize.Height;
+                    if (pbW <=0 || pbH <=0) return;
+
+                    // Source area before zoom
+                    int srcW1 = (int)Math.Round((double)pbW * zoomFactor);
+                    int srcH1 = (int)Math.Round((double)pbH * zoomFactor);
+                    var srcArea1 = justifyRectangleInImage(fullImage, fullImageClipCenter, srcW1, srcH1);
+                    if (srcArea1.IsEmpty) return;
+
+                    // Mouse position in pictureBox
+                    var mouseX = e.X;
+                    var mouseY = e.Y;
+
+                    // Full-image point under mouse before zoom
+                    double px = srcArea1.X + (mouseX / (double)pbW) * srcArea1.Width;
+                    double py = srcArea1.Y + (mouseY / (double)pbH) * srcArea1.Height;
+
+                    // Multiplicative step factor —10% per wheel step (can be tuned)
+                    double stepFactor =1.1;
+
+                    if (e.Delta >0)
+                    {
+                        double max = maxZoomFactor(originalImage ?? fullImage,
+                        overlayRectangle.Width >0 ? overlayRectangle.Width : pbW,
+                        overlayRectangle.Height >0 ? overlayRectangle.Height : pbH);
+                        zoomFactor = Math.Min(max, zoomFactor * stepFactor);
+                    }
+                    else if (e.Delta <0)
+                    {
+                        zoomFactor = Math.Max(0.1, zoomFactor / stepFactor);
+                    }
+
+                    // New source size after zoom
+                    int srcW2 = (int)Math.Round((double)pbW * zoomFactor);
+                    int srcH2 = (int)Math.Round((double)pbH * zoomFactor);
+
+                    // Desired source origin so that px,py maps to same mouse position
+                    double desiredSrcX = px - (mouseX / (double)pbW) * srcW2;
+                    double desiredSrcY = py - (mouseY / (double)pbH) * srcH2;
+
+                    double desiredCenterX = desiredSrcX + srcW2 /2.0;
+                    double desiredCenterY = desiredSrcY + srcH2 /2.0;
+
+                    var tentativeCenter = new Point((int)Math.Round(desiredCenterX), (int)Math.Round(desiredCenterY));
+                    var srcArea2 = justifyRectangleInImage(fullImage, tentativeCenter, srcW2, srcH2);
+                    if (!srcArea2.IsEmpty)
+                    {
+                        fullImageClipCenter = new Point(srcArea2.X + srcArea2.Width /2, srcArea2.Y + srcArea2.Height /2);
+                    }
+
+                    UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error adjusting zoom: {ex.Message}");
+                }
+            };
 
             // When the form is resized, recompute the overlay rectangle and regenerate the image
             this.Resize += (s, e) =>
@@ -529,7 +599,7 @@ namespace PhotoFileViewer
                     Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
 
                     Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
-                        resolutionComboBox.SelectedItem as string);
+                        saveResolution);
 
                     Image saveImage = ZoomImage(fullImage, srcRect, dstRect);
 
@@ -784,7 +854,7 @@ namespace PhotoFileViewer
                 Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
 
                 Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
-                    resolutionComboBox.SelectedItem as string);
+                    saveResolution);
 
                 // Show red border if the source rectangle is smaller than the destination rectangle
                 bool diminishedQuality = false;
@@ -858,8 +928,8 @@ namespace PhotoFileViewer
             int newCenterY = dragStartCenter.Y - (int)Math.Round((double)deltaSrcY * zoomFactor);
 
             // Clamp to image bounds
-            newCenterX = Math.Max(pbw/2, Math.Min(newCenterX, fullImage.Width - 1 - pbw/2));
-            newCenterY = Math.Max(pbh/2, Math.Min(newCenterY, fullImage.Height - 1 - pbh/2));
+            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width - 1));
+            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height - 1));
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
             updatePictureBoxImage();
