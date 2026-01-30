@@ -169,7 +169,7 @@ namespace PhotoFileViewer
                 Width =80,
                 Margin = new Padding(0,6,8,6)
             };
-            resolutionComboBox.Items.AddRange(new object[] { "High", "Low" });
+            resolutionComboBox.Items.AddRange(new object[] { "High", "Low", "Original" });
             resolutionComboBox.SelectedIndex =0; // default High
             resolutionComboBox.SelectedIndexChanged += (s, e) =>
             {
@@ -597,9 +597,14 @@ namespace PhotoFileViewer
                     }
 
                     Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
+                    Rectangle dstRect = new Rectangle(0,0, srcRect.Width, srcRect.Height);
 
-                    Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
-                        saveResolution);
+                    // If user did not selected Original, save at a fixed resolution depending on aspect and resolution
+                    if (!string.Equals(saveResolution, "Original", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
+                            saveResolution);
+                    }
 
                     Image saveImage = ZoomImage(fullImage, srcRect, dstRect);
 
@@ -853,13 +858,13 @@ namespace PhotoFileViewer
 
                 Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
 
-                Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
-                    saveResolution);
-
-                // Show red border if the source rectangle is smaller than the destination rectangle
                 bool diminishedQuality = false;
-                if (originalImage != null)
+                if (!string.Equals(saveResolution, "Original", StringComparison.OrdinalIgnoreCase))
                 {
+                    Rectangle dstRect = GetFixedResolutionRect(aspectComboBox.SelectedItem as string,
+                        saveResolution);
+
+                    // Show red border if the source rectangle is smaller than the destination rectangle
                     if (srcRect.Width < dstRect.Width || srcRect.Height < dstRect.Height)
                     {
                         diminishedQuality = true;
@@ -1253,6 +1258,20 @@ namespace PhotoFileViewer
                     }
                 }
 
+                // Load persisted resolution (High/Low)
+                if (!string.IsNullOrEmpty(settings.SaveResolution))
+                {
+                    for (int i =0; i < resolutionComboBox.Items.Count; i++)
+                    {
+                        if (string.Equals(resolutionComboBox.Items[i].ToString(), settings.SaveResolution, StringComparison.OrdinalIgnoreCase))
+                        {
+                            resolutionComboBox.SelectedIndex = i;
+                            saveResolution = settings.SaveResolution;
+                            break;
+                        }
+                    }
+                }
+
                 if (settings.FormWidth >100 && settings.FormHeight >100)
                 {
                     this.Size = new Size(settings.FormWidth, settings.FormHeight);
@@ -1274,6 +1293,7 @@ namespace PhotoFileViewer
                 {
                     StorageFolderPath = storageFolderPath ?? string.Empty,
                     Aspect = aspectComboBox.SelectedItem as string ?? string.Empty,
+                    SaveResolution = saveResolution ?? "High",
                     FormWidth = this.Size.Width,
                     FormHeight = this.Size.Height
                 };
@@ -1290,6 +1310,7 @@ namespace PhotoFileViewer
         {
             public string StorageFolderPath { get; set; }
             public string Aspect { get; set; }
+            public string SaveResolution { get; set; }
             public int FormWidth { get; set; }
             public int FormHeight { get; set; }
         } 
