@@ -75,12 +75,12 @@ namespace PhotoFileViewer
             Task.Run(() => ListenForFiles());
         }
 
-        double maxZoomFactor(Image image, int w, int h)
+        double maxZoomFactor(bool fill, Image image, int w, int h)
         {
             // Compute zoomFactor so that the full original image fits into the picture box
             double fx = image.Width / (double)w;
             double fy = image.Height / (double)h;
-            double target = Math.Max(fx, fy);
+            double target = fill ? Math.Min(fx,fy) : Math.Max(fx, fy);
             return target;
         }
 
@@ -282,8 +282,9 @@ namespace PhotoFileViewer
                 {
                     // multiplicative step so larger zooms change more
                     double stepFactor =1.1; //10% per click
-                    double max = maxZoomFactor(originalImage ?? fullImage, overlayRectangle.Width >0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
-                    overlayRectangle.Height >0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
+                    double max = maxZoomFactor(false, originalImage ?? fullImage,
+                        overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                        overlayRectangle.Height > 0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
                     zoomFactor = Math.Min(max, zoomFactor * stepFactor);
                     UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
 
@@ -337,7 +338,7 @@ namespace PhotoFileViewer
                     }
 
                     // Compute zoomFactor so that the original image fits into the picture box
-                    zoomFactor = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                    zoomFactor = maxZoomFactor(false, originalImage, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
@@ -355,6 +356,41 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Show All button to fit the original image into the picture box
+            var fillButton = new Button
+            {
+                Text = "Fill",
+                AutoSize = true,
+                Margin = new Padding(0, 4, 8, 4)
+            };
+            fillButton.Click += (s, e) =>
+            {
+                try
+                {
+                    if (originalImage == null || pictureBox == null)
+                    {
+                        UpdateStatus("No image to fit");
+                        return;
+                    }
+
+                    // Compute zoomFactor so that the original image fits into the picture box
+                    zoomFactor = maxZoomFactor(true, originalImage, overlayRectangle.Width, overlayRectangle.Height);
+
+                    // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
+                    if (fullImage != null)
+                    {
+                        fullImageClipCenter = new Point(fullImage.Width / 2, fullImage.Height / 2);
+                    }
+
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                    UpdateStatus($"Show All — zoomFactor set: {zoomFactor:0.00}");
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error fitting image: {ex.Message}");
+                }
+            };
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(resolutionComboBox);
@@ -363,6 +399,7 @@ namespace PhotoFileViewer
             flow.Controls.Add(zoomInButton);
             flow.Controls.Add(zoomOutButton);
             flow.Controls.Add(showAllButton);
+            flow.Controls.Add(fillButton);
             controlPanel.Controls.Add(flow);
 
             // Status label (will be in bottom row)
@@ -430,7 +467,7 @@ namespace PhotoFileViewer
 
                     if (e.Delta >0)
                     {
-                        double max = maxZoomFactor(originalImage ?? fullImage,
+                        double max = maxZoomFactor(false, originalImage ?? fullImage,
                         overlayRectangle.Width >0 ? overlayRectangle.Width : pbW,
                         overlayRectangle.Height >0 ? overlayRectangle.Height : pbH);
                         zoomFactor = Math.Min(max, zoomFactor * stepFactor);
@@ -477,7 +514,7 @@ namespace PhotoFileViewer
                 if (originalImage != null)
                 {
                     // Compute zoomFactor limit based on new overlay size so we don't exceed source bounds
-                    double max = maxZoomFactor(originalImage, overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                    double max = maxZoomFactor(false, originalImage, overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
                     overlayRectangle.Height > 0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
 
                     // Ensure a sensible zoomFactor
@@ -733,7 +770,7 @@ namespace PhotoFileViewer
                 {
                     // Re-adjust zoomFactor to account for new pictureBox size
                     // Compute zoomFactor so that the original image fits into the picture box
-                    double max = maxZoomFactor(originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                    double max = maxZoomFactor(false, originalImage, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Ensure a sensible zoomFactor
                     zoomFactor = Math.Min(zoomFactor, max);
