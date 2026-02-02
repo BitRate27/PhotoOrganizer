@@ -32,6 +32,8 @@ namespace PhotoFileViewer
         private ComboBox resolutionComboBox;
         // Rotation slider (degrees) -20..20, default0
         private TrackBar rotationTrackBar;
+        // Show grid while user is dragging rotation slider
+        private bool showRotationGrid = false;
 
         // Keep track of currently opened file path
         private string currentFilePath;
@@ -184,6 +186,21 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Toggle button to show/hide the rotation grid manually
+            var gridToggle = new CheckBox
+            {
+                Text = "Grid",
+                Appearance = Appearance.Button,
+                AutoSize = true,
+                Margin = new Padding(0,6,8,6),
+                Checked = false
+            };
+            gridToggle.CheckedChanged += (s, e) =>
+            {
+                showRotationGrid = gridToggle.Checked;
+                pictureBox?.Refresh();
+            };
+
             // Rotation slider: allow selection between -20 and20 degrees (not used elsewhere)
             // Create a panel to host the rotation TrackBar and a floating label above the thumb
             var rotationPanel = new Panel
@@ -285,7 +302,7 @@ namespace PhotoFileViewer
                     fullImage = big;
 
                     // Re-center clip
-                    fullImageClipCenter = new Point(fullW /2, fullH /2);
+                    // fullImageClipCenter = new Point(fullW /2, fullH /2);
 
                     updatePictureBoxImage();
                     pictureBox.Refresh();
@@ -463,6 +480,7 @@ namespace PhotoFileViewer
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(resolutionComboBox);
+            flow.Controls.Add(gridToggle);
             flow.Controls.Add(rotationPanel);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
@@ -727,7 +745,24 @@ namespace PhotoFileViewer
                                 try
                                 {
                                     // Some property items may not be valid for the new image; ignore failures
-                                    bmp.SetPropertyItem(prop);
+                                    if (prop.Id ==274)
+                                    {
+                                        // EXIF Orientation tag: set to1 (Horizontal)
+                                        try
+                                        {
+                                            var newProp = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                                            newProp.Id =274;
+                                            newProp.Type =3; // SHORT
+                                            newProp.Len =2;
+                                            newProp.Value = new byte[] {1,0 }; // little-endian1
+                                            bmp.SetPropertyItem(newProp);
+                                        }
+                                        catch { }
+                                    }
+                                    else
+                                    {
+                                        try { bmp.SetPropertyItem(prop); } catch { }
+                                    }
                                 }
                                 catch { }
                             }
@@ -989,6 +1024,39 @@ namespace PhotoFileViewer
                     e.Graphics.FillRectangle(brush,0, y, x, rectH);
                     // Right
                     e.Graphics.FillRectangle(brush, x + rectW, y, w - (x + rectW), rectH);
+                }
+                // If requested, draw a grid inside the overlay rectangle
+                if (showRotationGrid)
+                {
+                    var aspect = aspectComboBox.SelectedItem as string ?? "16:9";
+                    int cols =16, rows =9;
+                    if (string.Equals(aspect, "4:5", StringComparison.OrdinalIgnoreCase)) { cols =4; rows =5; }
+                    else if (string.Equals(aspect, "Square", StringComparison.OrdinalIgnoreCase)) { cols =5; rows =5; }
+                    else if (string.Equals(aspect, "16:9", StringComparison.OrdinalIgnoreCase)) { cols =16; rows =9; }
+
+                    if (cols >0 && rows >0 && rectW >0 && rectH >0)
+                    {
+                        using (var pen = new Pen(Color.FromArgb(180,255,255,255),1))
+                        {
+                            pen.DashStyle = DashStyle.Solid;
+                            float cellW = rectW / (float)cols;
+                            float cellH = rectH / (float)rows;
+
+                            // draw vertical lines
+                            for (int i =1; i < cols; i++)
+                            {
+                                float gx = x + i * cellW;
+                                e.Graphics.DrawLine(pen, gx, y, gx, y + rectH);
+                            }
+
+                            // draw horizontal lines
+                            for (int j =1; j < rows; j++)
+                            {
+                                float gy = y + j * cellH;
+                                e.Graphics.DrawLine(pen, x, gy, x + rectW, gy);
+                            }
+                        }
+                    }
                 }
                 // Optionally draw a thin border line to delineate the inner rectangle
                 using (var pen = new Pen(diminishedQuality ? Color.Red : Color.FromArgb(200,255,255,255),1))
