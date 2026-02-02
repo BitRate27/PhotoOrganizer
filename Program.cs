@@ -30,6 +30,8 @@ namespace PhotoFileViewer
         private Panel controlPanel;
         private ComboBox aspectComboBox;
         private ComboBox resolutionComboBox;
+        // Rotation slider (degrees) -20..20, default0
+        private TrackBar rotationTrackBar;
 
         // Keep track of currently opened file path
         private string currentFilePath;
@@ -182,6 +184,119 @@ namespace PhotoFileViewer
                 }
             };
 
+            // Rotation slider: allow selection between -20 and20 degrees (not used elsewhere)
+            // Create a panel to host the rotation TrackBar and a floating label above the thumb
+            var rotationPanel = new Panel
+            {
+                Width =120 *3, // triple the original width for finer control
+                Height =36, // must fit inside the control row (40 px)
+                Margin = new Padding(0,0,8,0),
+                AutoSize = false
+            };
+
+            // Label that displays the current rotation value and will be moved over the thumb
+            var rotationValueLabel = new Label
+            {
+                AutoSize = true,
+                Text = "0°",
+                BackColor = Color.LightYellow, // make label visible over controls
+                ForeColor = Color.Black,
+                Font = new Font("Segoe UI",9, FontStyle.Bold)
+            };
+
+            rotationTrackBar = new TrackBar
+            {
+                Minimum = -500,
+                Maximum =500,
+                Value =0,
+                TickFrequency =100,
+                SmallChange =25,
+                LargeChange =100,
+                Width = rotationPanel.Width,
+                Height =24,
+                AutoSize = false,
+                Location = new Point(0,8)
+            };
+
+            // Helper to position the label above the trackbar thumb
+            Action positionLabel = () =>
+            {
+                try
+                {
+                    int range = rotationTrackBar.Maximum - rotationTrackBar.Minimum;
+                    if (range <=0) range =1;
+                    double frac = (rotationTrackBar.Value - rotationTrackBar.Minimum) / (double)range;
+                    // approximate thumb offset inside the trackbar
+                    int trackWidth = rotationTrackBar.Width -8; // leave small margin
+                    int thumbX = (int)Math.Round(frac * trackWidth);
+                    int labelX = rotationTrackBar.Left + thumbX - rotationValueLabel.Width /2;
+                    // clamp inside panel
+                    labelX = Math.Max(0, Math.Min(labelX, rotationPanel.Width - rotationValueLabel.Width));
+                    rotationValueLabel.Location = new Point(labelX,0);
+                }
+                catch { }
+            };
+
+            // Update image rotation when slider moves: recreate fullImage rotated by selected angle
+            rotationTrackBar.Scroll += (s, e) =>
+            {
+                try
+                {
+                    rotationValueLabel.Text = (rotationTrackBar.Value *0.01).ToString("0.00") + "°";
+                    positionLabel();
+
+                    if (originalImage == null)
+                    {
+                        UpdateStatus("No image to rotate");
+                        return;
+                    }
+
+                    double angle = (double)rotationTrackBar.Value * 0.01; // degrees
+
+                    // Build a new large canvas as in OpenFile (clamped to avoid excessive sizes)
+                    int max = Math.Max(originalImage.Width, originalImage.Height);
+                    int fullW = Math.Min(16000, max *3);
+                    int fullH = Math.Min(16000, max *3);
+
+                    var big = new Bitmap(fullW, fullH);
+                    using (var g = Graphics.FromImage(big))
+                    {
+                        g.Clear(Color.Black);
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.CompositingQuality = CompositingQuality.HighQuality;
+
+                        // Draw the original image rotated around its center placed at the center of the big canvas
+                        g.TranslateTransform(fullW /2f, fullH /2f);
+                        g.RotateTransform((float)angle);
+                        g.TranslateTransform(-originalImage.Width /2f, -originalImage.Height /2f);
+                        g.DrawImage(originalImage,0,0, originalImage.Width, originalImage.Height);
+
+                        // Reset transform (not strictly necessary since Graphics is disposed)
+                        g.ResetTransform();
+                    }
+
+                    // Replace fullImage (dispose previous)
+                    if (fullImage != null)
+                    {
+                        try { fullImage.Dispose(); } catch { }
+                        fullImage = null;
+                    }
+                    fullImage = big;
+
+                    // Re-center clip
+                    fullImageClipCenter = new Point(fullW /2, fullH /2);
+
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                    UpdateStatus($"Image rotated {angle}°");
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error rotating image: {ex.Message}");
+                }
+            };
+
             // Flip button to the right of the aspect combo
             var flipButton = new Button
             {
@@ -269,58 +384,6 @@ namespace PhotoFileViewer
                 }
             };
 
-            // Zoom Out button to the right of Rotate button
-            var zoomOutButton = new Button
-            {
-                Text = "Zoom Out",
-                AutoSize = true,
-                Margin = new Padding(0,4,8,4)
-            };
-            zoomOutButton.Click += (s, e) =>
-            {
-                try
-                {
-                    // multiplicative step so larger zooms change more
-                    double stepFactor =1.1; //10% per click
-                    double max = maxZoomFactor(false, originalImage ?? fullImage,
-                        overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
-                        overlayRectangle.Height > 0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
-                    zoomFactor = Math.Min(max, zoomFactor * stepFactor);
-                    UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
-
-                    updatePictureBoxImage();
-                    pictureBox.Refresh();
-                }
-                catch (Exception ex)
-                {
-                    UpdateStatus($"Error adjusting zoom: {ex.Message}");
-                }
-            };
-
-            // Zoom In button (decrease zoomFactor)
-            var zoomInButton = new Button
-            {
-                Text = "Zoom In",
-                AutoSize = true,
-                Margin = new Padding(0,4,8,4)
-            };
-            zoomInButton.Click += (s, e) =>
-            {
-                try
-                {
-                    // multiplicative zoom in (reduce zoomFactor) so larger zooms change more
-                    double stepFactor =1.1;
-                    zoomFactor = Math.Max(0.1, zoomFactor / stepFactor);
-                    UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
-                    updatePictureBoxImage();
-                    pictureBox.Refresh();
-                }
-                catch (Exception ex)
-                {
-                    UpdateStatus($"Error adjusting zoom: {ex.Message}");
-                }
-            };
-
             // Show All button to fit the original image into the picture box
             var showAllButton = new Button
             {
@@ -391,13 +454,18 @@ namespace PhotoFileViewer
                     UpdateStatus($"Error fitting image: {ex.Message}");
                 }
             };
+            // Add controls to the rotation panel
+            rotationPanel.Controls.Add(rotationValueLabel);
+            rotationPanel.Controls.Add(rotationTrackBar);
+            // position label initially so it's shown immediately
+            positionLabel();
+
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(resolutionComboBox);
+            flow.Controls.Add(rotationPanel);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
-            flow.Controls.Add(zoomInButton);
-            flow.Controls.Add(zoomOutButton);
             flow.Controls.Add(showAllButton);
             flow.Controls.Add(fillButton);
             controlPanel.Controls.Add(flow);
@@ -1135,8 +1203,8 @@ namespace PhotoFileViewer
                         // Create a new fullImage twice as large in each dimension, filled with black,
                         // and draw the original image centered inside it.
                         int max = Math.Max(originalImage.Width, originalImage.Height);
-                        int fullW = max * 3;
-                        int fullH = max * 3;
+                        int fullW = Math.Min(16000,max * 3);
+                        int fullH = Math.Min(16000,max * 3);
                         var big = new Bitmap(fullW, fullH);
                         using (var g = Graphics.FromImage(big))
                         {
