@@ -59,6 +59,7 @@ namespace PhotoFileViewer
         private bool isDraggingClip = false;
         private Point dragStartMouse;
         private Point dragStartCenter;
+        private const int EXIFOrientationID = 274;
 
         public PhotoViewerForm(string initialFile)
         {
@@ -745,7 +746,7 @@ namespace PhotoFileViewer
                                 try
                                 {
                                     // Some property items may not be valid for the new image; ignore failures
-                                    if (prop.Id ==274)
+                                    if (prop.Id == EXIFOrientationID)
                                     {
                                         // EXIF Orientation tag: set to1 (Horizontal)
                                         try
@@ -1255,7 +1256,27 @@ namespace PhotoFileViewer
                                 originalPropertyItems = new PropertyItem[ids.Length];
                                 for (int i =0; i < ids.Length; i++)
                                 {
-                                    try { originalPropertyItems[i] = img.GetPropertyItem(ids[i]); } catch { originalPropertyItems[i] = null; }
+                                    try { 
+                                        if (img.GetPropertyItem(ids[i]).Id == EXIFOrientationID)
+                                        {
+                                            // Handle EXIF Orientation tag to rotate the image to correct orientation
+                                            if (img.GetPropertyItem(ids[i]).Value.Length >= 2)
+                                            {
+                                                ushort orientation = BitConverter.ToUInt16(img.GetPropertyItem(ids[i]).Value, 0);
+                                                if (orientation == 3)
+                                                    originalImage.RotateFlip(RotateFlipType.Rotate180FlipNone);
+                                                else if (orientation == 6)
+                                                    originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                                                else if (orientation == 8)
+                                                    originalImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                                            }
+
+                                        }
+                                        else 
+                                        {
+                                            originalPropertyItems[i] = img.GetPropertyItem(ids[i]);
+                                        }
+                                    } catch { originalPropertyItems[i] = null; }
                                 }
                             }
                             else
