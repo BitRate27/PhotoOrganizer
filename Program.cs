@@ -31,7 +31,7 @@ namespace PhotoFileViewer
         private ComboBox aspectComboBox;
         private ComboBox resolutionComboBox;
         // Rotation slider (degrees) -20..20, default0
-        private TrackBar rotationTrackBar;
+        private double rotationAngle =0.0;
         // Show grid while user is dragging rotation slider
         private bool showRotationGrid = false;
 
@@ -188,6 +188,7 @@ namespace PhotoFileViewer
             };
 
             // Toggle button to show/hide the rotation grid manually
+            // Toggle button to show/hide the rotation grid manually
             var gridToggle = new CheckBox
             {
                 Text = "Grid",
@@ -202,80 +203,36 @@ namespace PhotoFileViewer
                 pictureBox?.Refresh();
             };
 
-            // Rotation slider: allow selection between -20 and20 degrees (not used elsewhere)
-            // Create a panel to host the rotation TrackBar and a floating label above the thumb
-            var rotationPanel = new Panel
+            // Replace rotation TrackBar with three buttons: decrease, reset, increase (step0.1°)
+            var rotateDecreaseButton = new Button
             {
-                Width =120 *3, // triple the original width for finer control
-                Height =36, // must fit inside the control row (40 px)
-                Margin = new Padding(0,0,8,0),
-                AutoSize = false
-            };
-
-            // Label that displays the current rotation value and will be moved over the thumb
-            var rotationValueLabel = new Label
-            {
+                Text = "-0.1°",
                 AutoSize = true,
-                Text = "0°",
-                BackColor = Color.LightYellow, // make label visible over controls
-                ForeColor = Color.Black,
-                Font = new Font("Segoe UI",9, FontStyle.Bold)
+                Margin = new Padding(0,6,4,6)
             };
-
-            rotationTrackBar = new TrackBar
+            var rotateResetButton = new Button
             {
-                Minimum = -500,
-                Maximum =500,
-                Value =0,
-                TickFrequency =100,
-                SmallChange =25,
-                LargeChange =100,
-                Width = rotationPanel.Width,
-                Height =24,
-                AutoSize = false,
-                Location = new Point(0,8)
+                Text = "Reset",
+                AutoSize = true,
+                Margin = new Padding(0,6,4,6)
+            };
+            var rotateIncreaseButton = new Button
+            {
+                Text = "+0.1°",
+                AutoSize = true,
+                Margin = new Padding(0,6,8,6)
             };
 
-            // Helper to position the label above the trackbar thumb
-            Action positionLabel = () =>
+            // Helper to apply rotation around original image center and rebuild fullImage
+            Action applyRotation = () =>
             {
                 try
                 {
-                    int range = rotationTrackBar.Maximum - rotationTrackBar.Minimum;
-                    if (range <=0) range =1;
-                    double frac = (rotationTrackBar.Value - rotationTrackBar.Minimum) / (double)range;
-                    // approximate thumb offset inside the trackbar
-                    int trackWidth = rotationTrackBar.Width -8; // leave small margin
-                    int thumbX = (int)Math.Round(frac * trackWidth);
-                    int labelX = rotationTrackBar.Left + thumbX - rotationValueLabel.Width /2;
-                    // clamp inside panel
-                    labelX = Math.Max(0, Math.Min(labelX, rotationPanel.Width - rotationValueLabel.Width));
-                    rotationValueLabel.Location = new Point(labelX,0);
-                }
-                catch { }
-            };
-
-            // Update image rotation when slider moves: recreate fullImage rotated by selected angle
-            rotationTrackBar.Scroll += (s, e) =>
-            {
-                try
-                {
-                    rotationValueLabel.Text = (rotationTrackBar.Value *0.01).ToString("0.00") + "°";
-                    positionLabel();
-
-                    if (originalImage == null)
-                    {
-                        UpdateStatus("No image to rotate");
-                        return;
-                    }
-
-                    double angle = (double)rotationTrackBar.Value * 0.01; // degrees
-
-                    // Build a new large canvas as in OpenFile (clamped to avoid excessive sizes)
+                    if (originalImage == null) return;
+                    double angle = rotationAngle; // degrees
                     int max = Math.Max(originalImage.Width, originalImage.Height);
                     int fullW = Math.Min(16000, max *3);
                     int fullH = Math.Min(16000, max *3);
-
                     var big = new Bitmap(fullW, fullH);
                     using (var g = Graphics.FromImage(big))
                     {
@@ -283,37 +240,27 @@ namespace PhotoFileViewer
                         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                         g.CompositingQuality = CompositingQuality.HighQuality;
-
-                        // Draw the original image rotated around its center placed at the center of the big canvas
                         g.TranslateTransform(fullW /2f, fullH /2f);
                         g.RotateTransform((float)angle);
                         g.TranslateTransform(-originalImage.Width /2f, -originalImage.Height /2f);
                         g.DrawImage(originalImage,0,0, originalImage.Width, originalImage.Height);
-
-                        // Reset transform (not strictly necessary since Graphics is disposed)
                         g.ResetTransform();
                     }
-
-                    // Replace fullImage (dispose previous)
-                    if (fullImage != null)
-                    {
-                        try { fullImage.Dispose(); } catch { }
-                        fullImage = null;
-                    }
+                    if (fullImage != null) { try { fullImage.Dispose(); } catch { } fullImage = null; }
                     fullImage = big;
-
-                    // Re-center clip
-                    // fullImageClipCenter = new Point(fullW /2, fullH /2);
-
                     updatePictureBoxImage();
                     pictureBox.Refresh();
-                    UpdateStatus($"Image rotated {angle}°");
+                    UpdateStatus($"Image rotated {rotationAngle:0.00}°");
                 }
                 catch (Exception ex)
                 {
                     UpdateStatus($"Error rotating image: {ex.Message}");
                 }
             };
+
+            rotateDecreaseButton.Click += (s, e) => { rotationAngle -=0.1; applyRotation(); };
+            rotateIncreaseButton.Click += (s, e) => { rotationAngle +=0.1; applyRotation(); };
+            rotateResetButton.Click += (s, e) => { rotationAngle =0.0; applyRotation(); };
 
             // Flip button to the right of the aspect combo
             var flipButton = new Button
@@ -472,17 +419,13 @@ namespace PhotoFileViewer
                     UpdateStatus($"Error fitting image: {ex.Message}");
                 }
             };
-            // Add controls to the rotation panel
-            rotationPanel.Controls.Add(rotationValueLabel);
-            rotationPanel.Controls.Add(rotationTrackBar);
-            // position label initially so it's shown immediately
-            positionLabel();
-
             // Add controls into the flow panel then into the control panel
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(resolutionComboBox);
             flow.Controls.Add(gridToggle);
-            flow.Controls.Add(rotationPanel);
+            flow.Controls.Add(rotateDecreaseButton);
+            flow.Controls.Add(rotateResetButton);
+            flow.Controls.Add(rotateIncreaseButton);
             flow.Controls.Add(flipButton);
             flow.Controls.Add(rotateButton);
             flow.Controls.Add(showAllButton);
@@ -1270,7 +1213,8 @@ namespace PhotoFileViewer
                                                 else if (orientation == 8)
                                                     originalImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
                                             }
-
+                                            // Don't set orientation metadata on the saved image since we already applied it;
+                                            // set to 1 (Horizontal)
                                         }
                                         else 
                                         {
