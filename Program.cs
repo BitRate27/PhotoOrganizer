@@ -61,6 +61,11 @@ namespace PhotoFileViewer
         private Point dragStartCenter;
         private const int EXIFOrientationID = 274;
 
+        // Right-button dragging for rotation
+        private bool isRightDragging = false;
+        private Point rightDragStart;
+        private Point rightDragCurrent;
+
         public PhotoViewerForm(string initialFile)
         {
             InitializeComponent();
@@ -80,11 +85,11 @@ namespace PhotoFileViewer
             Task.Run(() => ListenForFiles());
         }
 
-        double maxZoomFactor(bool fill, Image image, int w, int h)
+        double maxZoomFactor(bool fill, int imageW, int imageH, int w, int h)
         {
             // Compute zoomFactor so that the full original image fits into the picture box
-            double fx = image.Width / (double)w;
-            double fy = image.Height / (double)h;
+            double fx = imageW / (double)w;
+            double fy = imageH / (double)h;
             double target = fill ? Math.Min(fx,fy) : Math.Max(fx, fy);
             return target;
         }
@@ -203,24 +208,12 @@ namespace PhotoFileViewer
                 pictureBox?.Refresh();
             };
 
-            // Replace rotation TrackBar with three buttons: decrease, reset, increase (step0.1°)
-            var rotateDecreaseButton = new Button
-            {
-                Text = "-0.1°",
-                AutoSize = true,
-                Margin = new Padding(0,6,4,6)
-            };
+            // Replace rotation TrackBar with a Reset button only (step0.1° buttons and90° Rotate removed)
             var rotateResetButton = new Button
             {
                 Text = "Reset",
                 AutoSize = true,
                 Margin = new Padding(0,6,4,6)
-            };
-            var rotateIncreaseButton = new Button
-            {
-                Text = "+0.1°",
-                AutoSize = true,
-                Margin = new Padding(0,6,8,6)
             };
 
             // Helper to apply rotation around original image center and rebuild fullImage
@@ -258,8 +251,6 @@ namespace PhotoFileViewer
                 }
             };
 
-            rotateDecreaseButton.Click += (s, e) => { rotationAngle -=0.1; applyRotation(); };
-            rotateIncreaseButton.Click += (s, e) => { rotationAngle +=0.1; applyRotation(); };
             rotateResetButton.Click += (s, e) => { rotationAngle =0.0; applyRotation(); };
 
             // Flip button to the right of the aspect combo
@@ -297,58 +288,6 @@ namespace PhotoFileViewer
                 }
             };
 
-            // Rotate button to the right of the Flip button
-            var rotateButton = new Button
-            {
-                Text = "Rotate",
-                AutoSize = true,
-                Margin = new Padding(0, 4, 8, 4)
-            };
-            rotateButton.Click += (s, e) =>
-            {
-                try
-                {
-                    if (fullImage != null)
-                    {
-                        // Rotate 90 degrees clockwise
-                        // Save old center and dimensions before rotation
-                        int oldCenterX = fullImageClipCenter.X;
-                        int oldCenterY = fullImageClipCenter.Y;
-                        int oldWidth = fullImage.Width;
-                        int oldHeight = fullImage.Height;
-
-                        fullImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
-                        if (originalImage != null)
-                        {
-                            originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
-                        }
-
-                        // After rotating 90° clockwise, a point at (x,y) in the old image
-                        // maps to (y, oldWidth -1 - x) in the rotated image.
-                        int newCenterX = oldCenterY;
-                        int newCenterY = oldWidth - 1 - oldCenterX;
-
-                        // Clamp to new image bounds
-                        newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width - 1));
-                        newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height - 1));
-
-                        fullImageClipCenter = new Point(newCenterX, newCenterY);
-
-                        updatePictureBoxImage();
-                        pictureBox.Refresh();
-                        UpdateStatus("Image rotated 90° clockwise");
-                    }
-                    else
-                    {
-                        UpdateStatus("No image to rotate");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    UpdateStatus($"Error rotating image: {ex.Message}");
-                }
-            };
-
             // Show All button to fit the original image into the picture box
             var showAllButton = new Button
             {
@@ -366,7 +305,7 @@ namespace PhotoFileViewer
                     }
 
                     // Compute zoomFactor so that the original image fits into the picture box
-                    zoomFactor = maxZoomFactor(false, originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                    zoomFactor = maxZoomFactor(false, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
@@ -402,7 +341,7 @@ namespace PhotoFileViewer
                     }
 
                     // Compute zoomFactor so that the original image fits into the picture box
-                    zoomFactor = maxZoomFactor(true, originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                    zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
@@ -423,11 +362,8 @@ namespace PhotoFileViewer
             flow.Controls.Add(aspectComboBox);
             flow.Controls.Add(resolutionComboBox);
             flow.Controls.Add(gridToggle);
-            flow.Controls.Add(rotateDecreaseButton);
             flow.Controls.Add(rotateResetButton);
-            flow.Controls.Add(rotateIncreaseButton);
             flow.Controls.Add(flipButton);
-            flow.Controls.Add(rotateButton);
             flow.Controls.Add(showAllButton);
             flow.Controls.Add(fillButton);
             controlPanel.Controls.Add(flow);
@@ -497,7 +433,7 @@ namespace PhotoFileViewer
 
                     if (e.Delta >0)
                     {
-                        double max = maxZoomFactor(false, originalImage ?? fullImage,
+                        double max = maxZoomFactor(false, originalImage.Width, originalImage.Height,
                         overlayRectangle.Width >0 ? overlayRectangle.Width : pbW,
                         overlayRectangle.Height >0 ? overlayRectangle.Height : pbH);
                         zoomFactor = Math.Min(max, zoomFactor * stepFactor);
@@ -544,7 +480,7 @@ namespace PhotoFileViewer
                 if (originalImage != null)
                 {
                     // Compute zoomFactor limit based on new overlay size so we don't exceed source bounds
-                    double max = maxZoomFactor(false, originalImage, overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
+                    double max = maxZoomFactor(false, originalImage.Width, originalImage.Height, overlayRectangle.Width > 0 ? overlayRectangle.Width : pictureBox.ClientSize.Width,
                     overlayRectangle.Height > 0 ? overlayRectangle.Height : pictureBox.ClientSize.Height);
 
                     // Ensure a sensible zoomFactor
@@ -817,7 +753,7 @@ namespace PhotoFileViewer
                 {
                     // Re-adjust zoomFactor to account for new pictureBox size
                     // Compute zoomFactor so that the original image fits into the picture box
-                    double max = maxZoomFactor(false, originalImage, overlayRectangle.Width, overlayRectangle.Height);
+                    double max = maxZoomFactor(false, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
 
                     // Ensure a sensible zoomFactor
                     zoomFactor = Math.Min(zoomFactor, max);
@@ -932,7 +868,7 @@ namespace PhotoFileViewer
                     e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                     e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
 
-                    e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0, 0, w, h));
+                    e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0,0, w, h));
                 }
 
                 int x = overlayRectangle.X;
@@ -1008,6 +944,21 @@ namespace PhotoFileViewer
                     e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                     e.Graphics.DrawRectangle(pen, x, y, rectW -1, rectH -1);
                 }
+
+                // Draw rubberband line if right-dragging
+                if (isRightDragging)
+                {
+                    try
+                    {
+                        using (var rbPen = new Pen(Color.Yellow,2))
+                        {
+                            rbPen.DashStyle = DashStyle.Solid;
+                            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                            e.Graphics.DrawLine(rbPen, rightDragStart, rightDragCurrent);
+                        }
+                    }
+                    catch { }
+                }
             }
             catch
             {
@@ -1017,18 +968,40 @@ namespace PhotoFileViewer
 
         private void PictureBox_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left) return;
-            if (fullImage == null) return;
+            if (e.Button == MouseButtons.Left)
+            {
+                if (fullImage == null) return;
 
-            isDraggingClip = true;
-            dragStartMouse = e.Location;
-            dragStartCenter = fullImageClipCenter;
-            Cursor = Cursors.Hand;
-            pictureBox.Capture = true;
+                isDraggingClip = true;
+                dragStartMouse = e.Location;
+                dragStartCenter = fullImageClipCenter;
+                Cursor = Cursors.Hand;
+                pictureBox.Capture = true;
+                return;
+            }
+
+            if (e.Button == MouseButtons.Right)
+            {
+                // Start rubberband rotation
+                isRightDragging = true;
+                rightDragStart = e.Location;
+                rightDragCurrent = e.Location;
+                pictureBox.Capture = true;
+                Cursor = Cursors.Cross;
+                pictureBox.Invalidate();
+            }
         }
 
         private void PictureBox_MouseMove(object sender, MouseEventArgs e)
         {
+            if (isRightDragging)
+            {
+                rightDragCurrent = e.Location;
+                // Erase previous line by invalidating (causes Paint to redraw without previous line)
+                pictureBox.Invalidate();
+                return;
+            }
+
             if (!isDraggingClip || fullImage == null) return;
 
             int pbw = pictureBox.ClientSize.Width;
@@ -1050,8 +1023,8 @@ namespace PhotoFileViewer
             int newCenterY = dragStartCenter.Y - (int)Math.Round((double)deltaSrcY * zoomFactor);
 
             // Clamp to image bounds
-            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width - 1));
-            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height - 1));
+            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width -1));
+            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height -1));
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
             updatePictureBoxImage();
@@ -1060,10 +1033,131 @@ namespace PhotoFileViewer
 
         private void PictureBox_MouseUp(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left) return;
-            isDraggingClip = false;
-            Cursor = Cursors.Default;
-            pictureBox.Capture = false;
+            if (e.Button == MouseButtons.Left)
+            {
+                isDraggingClip = false;
+                Cursor = Cursors.Default;
+                pictureBox.Capture = false;
+                return;
+            }
+
+            if (e.Button == MouseButtons.Right && isRightDragging)
+            {
+                // Finalize rotation based on rubberband angle
+                isRightDragging = false;
+                pictureBox.Capture = false;
+                Cursor = Cursors.Default;
+
+                // Compute angle in degrees from the rubberband line
+                double dx = rightDragCurrent.X - rightDragStart.X;
+                double dy = rightDragCurrent.Y - rightDragStart.Y;
+                if (dx == 0 && dy == 0)
+                {
+                    // No movement; nothing to do
+                    pictureBox.Invalidate();
+                    return;
+                }
+
+                double angleDeg = 0.0;
+
+                // To provide a more intuitive rotation feel, we can choose to compute the angle
+                // based on the dominant direction of the drag.
+                if ((dx <= 0.0) && (dy <= 0.0)) // A
+                {
+                    angleDeg = Math.Atan2(-dy, -dx) * (180.0 / Math.PI);
+                }
+                else if ((dx >= 0.0) && (dy <= 0.0)) // B
+                {
+                    angleDeg = Math.Atan2(dy, dx) * (180.0 / Math.PI);
+                }
+                else if ((dx <= 0.0) && (dy >= 0.0)) // C
+                {
+                    angleDeg = Math.Atan2(-dy, -dx) * (180.0 / Math.PI);
+                }
+                else // D
+                {
+                    angleDeg = Math.Atan2(dy, dx) * (180.0 / Math.PI);
+                }
+
+                // Calculate size of an unrotated image (same aspect ratio as original) that will fit completely
+                // inside the originalImage rotated by -angleDeg. We compute the maximal uniform scale factor s (<=1)
+                // such that a rectangle of size s*W x s*H, when rotated by -angleDeg, fits entirely within the
+                // original image bounds. This assumes the candidate rectangle is centered.
+                int fitW = 0, fitH = 0;
+                try
+                {
+                    if (originalImage != null)
+                    {
+                        double theta = -angleDeg * Math.PI / 180.0; // rotation in radians
+                        double W0 = originalImage.Width;
+                        double H0 = originalImage.Height;
+
+                        // Use absolute values of sin/cos because symmetry
+                        double c = Math.Abs(Math.Cos(theta));
+                        double s = Math.Abs(Math.Sin(theta));
+
+                        // Axis-aligned bounding box of rotated rectangle (w,h) is:
+                        // bboxW = w*c + h*s
+                        // bboxH = w*s + h*c
+                        // For w = scale*W0, h = scale*H0 we require:
+                        // scale*(W0*c + H0*s) <= W0
+                        // scale*(W0*s + H0*c) <= H0
+                        // Solve for scale limits
+                        double denomW = W0 * c + H0 * s;
+                        double denomH = W0 * s + H0 * c;
+
+                        double scaleLimitW = denomW > 1e-9 ? (W0 / denomW) : double.MaxValue;
+                        double scaleLimitH = denomH > 1e-9 ? (H0 / denomH) : double.MaxValue;
+
+                        double scale = Math.Min(1.0, Math.Min(scaleLimitW, scaleLimitH));
+
+                        fitW = Math.Max(1, (int)Math.Round(scale * W0));
+                        fitH = Math.Max(1, (int)Math.Round(scale * H0));
+
+                        UpdateStatus($"Max unrotated fit inside rotated image: {fitW}x{fitH} (scale {scale:0.000})");
+
+                        // Compute zoomFactor so that the original image fits into the picture box
+                        zoomFactor = maxZoomFactor(true, fitW, fitH, overlayRectangle.Width, overlayRectangle.Height);
+                    }
+                }
+                catch { }
+
+                // Apply rotation
+                try
+                {
+                    // Reuse the same CPU rotate logic used elsewhere
+                    rotationAngle = -angleDeg;
+                    int max = Math.Max(originalImage.Width, originalImage.Height);
+                    int fullW = Math.Min(16000, max * 3);
+                    int fullH = Math.Min(16000, max * 3);
+                    var big = new Bitmap(fullW, fullH);
+                    using (var g = Graphics.FromImage(big))
+                    {
+                        g.Clear(Color.Black);
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.CompositingQuality = CompositingQuality.HighQuality;
+                        g.TranslateTransform(fullW / 2f, fullH / 2f);
+                        g.RotateTransform((float)rotationAngle);
+                        g.TranslateTransform(-originalImage.Width / 2f, -originalImage.Height / 2f);
+                        g.DrawImage(originalImage, 0, 0, originalImage.Width, originalImage.Height);
+                        g.ResetTransform();
+                    }
+                    if (fullImage != null) { try { fullImage.Dispose(); } catch { } fullImage = null; }
+                    fullImage = big;
+                    fullImageClipCenter = new Point(fullImage.Width / 2, fullImage.Height / 2);
+                    updatePictureBoxImage();
+                    pictureBox.Refresh();
+                    UpdateStatus($"Image rotated {rotationAngle:0.00}°");
+                }
+                catch (Exception ex)
+                {
+                    UpdateStatus($"Error rotating image: {ex.Message}");
+                }
+
+                // Erase last line by invalidating
+                pictureBox.Invalidate();
+            }
         }
 
         private double ParseAspectRatio(string s)
