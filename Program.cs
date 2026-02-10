@@ -18,6 +18,7 @@ namespace PhotoFileViewer
         private Panel imagePanel;
         private PictureBox pictureBox;
         private Label statusLabel;
+        private Label photoInfo;
         private bool isRunning = true;
         private const string PIPE_NAME = "PhotoFileViewerPipe";
 
@@ -31,7 +32,7 @@ namespace PhotoFileViewer
         private ComboBox aspectComboBox;
         private ComboBox resolutionComboBox;
         // Rotation slider (degrees) -20..20, default0
-        private double rotationAngle =0.0;
+        private double rotationAngle = 0.0;
         // Show grid while user is dragging rotation slider
         private bool showRotationGrid = false;
 
@@ -49,7 +50,7 @@ namespace PhotoFileViewer
         private Point fullImageClipCenter;
 
         // Zoom factor increases/decreases by0.1 each time zoom is pressed
-        private double zoomFactor =1.0;
+        private double zoomFactor = 1.0;
         // Save resolution option (High/Low)
         private string saveResolution = "High";
         // Settings file path for persisting user preferences (JSON)
@@ -90,7 +91,7 @@ namespace PhotoFileViewer
             // Compute zoomFactor so that the full original image fits into the picture box
             double fx = imageW / (double)w;
             double fy = imageH / (double)h;
-            double target = fill ? Math.Min(fx,fy) : Math.Max(fx, fy);
+            double target = fill ? Math.Min(fx, fy) : Math.Max(fx, fy);
             return target;
         }
 
@@ -106,7 +107,7 @@ namespace PhotoFileViewer
             {
                 return Rectangle.Empty;
             }
-            
+
             if (srcArea.X < 0) srcArea.X = 0;
             if (srcArea.Y < 0) srcArea.Y = 0;
 
@@ -152,11 +153,11 @@ namespace PhotoFileViewer
             aspectComboBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width =80,
-                Margin = new Padding(0,6,8,6)
+                Width = 80,
+                Margin = new Padding(0, 6, 8, 6)
             };
             aspectComboBox.Items.AddRange(new object[] { "16:9", "4:5", "Square" });
-            aspectComboBox.SelectedIndex = 0; // default to 16:9
+            aspectComboBox.SelectedIndex = 0; // default to16:9
             aspectComboBox.SelectedIndexChanged += (s, e) =>
             {
                 var selected = aspectComboBox.SelectedItem as string;
@@ -176,11 +177,11 @@ namespace PhotoFileViewer
             resolutionComboBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width =80,
-                Margin = new Padding(0,6,8,6)
+                Width = 80,
+                Margin = new Padding(0, 6, 8, 6)
             };
             resolutionComboBox.Items.AddRange(new object[] { "High", "Low", "Original" });
-            resolutionComboBox.SelectedIndex =0; // default High
+            resolutionComboBox.SelectedIndex = 0; // default High
             resolutionComboBox.SelectedIndexChanged += (s, e) =>
             {
                 var sel = resolutionComboBox.SelectedItem as string;
@@ -193,13 +194,12 @@ namespace PhotoFileViewer
             };
 
             // Toggle button to show/hide the rotation grid manually
-            // Toggle button to show/hide the rotation grid manually
             var gridToggle = new CheckBox
             {
                 Text = "Grid",
                 Appearance = Appearance.Button,
                 AutoSize = true,
-                Margin = new Padding(0,6,8,6),
+                Margin = new Padding(0, 6, 8, 6),
                 Checked = false
             };
             gridToggle.CheckedChanged += (s, e) =>
@@ -208,12 +208,12 @@ namespace PhotoFileViewer
                 pictureBox?.Refresh();
             };
 
-            // Replace rotation TrackBar with a Reset button only (step0.1° buttons and90° Rotate removed)
+            // Reset button only
             var rotateResetButton = new Button
             {
                 Text = "Reset",
                 AutoSize = true,
-                Margin = new Padding(0,6,4,6)
+                Margin = new Padding(0, 6, 4, 6)
             };
 
             // Helper to apply rotation around original image center and rebuild fullImage
@@ -224,8 +224,8 @@ namespace PhotoFileViewer
                     if (originalImage == null) return;
                     double angle = rotationAngle; // degrees
                     int max = Math.Max(originalImage.Width, originalImage.Height);
-                    int fullW = Math.Min(16000, max *3);
-                    int fullH = Math.Min(16000, max *3);
+                    int fullW = Math.Min(16000, max * 3);
+                    int fullH = Math.Min(16000, max * 3);
                     var big = new Bitmap(fullW, fullH);
                     using (var g = Graphics.FromImage(big))
                     {
@@ -233,10 +233,10 @@ namespace PhotoFileViewer
                         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                         g.CompositingQuality = CompositingQuality.HighQuality;
-                        g.TranslateTransform(fullW /2f, fullH /2f);
+                        g.TranslateTransform(fullW / 2f, fullH / 2f);
                         g.RotateTransform((float)angle);
-                        g.TranslateTransform(-originalImage.Width /2f, -originalImage.Height /2f);
-                        g.DrawImage(originalImage,0,0, originalImage.Width, originalImage.Height);
+                        g.TranslateTransform(-originalImage.Width / 2f, -originalImage.Height / 2f);
+                        g.DrawImage(originalImage, 0, 0, originalImage.Width, originalImage.Height);
                         g.ResetTransform();
                     }
                     if (fullImage != null) { try { fullImage.Dispose(); } catch { } fullImage = null; }
@@ -251,9 +251,9 @@ namespace PhotoFileViewer
                 }
             };
 
-            rotateResetButton.Click += (s, e) => { rotationAngle =0.0; applyRotation(); };
+            rotateResetButton.Click += (s, e) => { rotationAngle = 0.0; applyRotation(); };
 
-            // Flip button to the right of the aspect combo
+            // Flip button
             var flipButton = new Button
             {
                 Text = "Flip",
@@ -266,7 +266,6 @@ namespace PhotoFileViewer
                 {
                     if (fullImage != null)
                     {
-                        // Flip horizontally
                         fullImage.RotateFlip(RotateFlipType.RotateNoneFlipX);
                         if (originalImage != null)
                         {
@@ -288,29 +287,27 @@ namespace PhotoFileViewer
                 }
             };
 
-            // Show All button to fit the original image into the picture box
+            // Show All button
             var showAllButton = new Button
             {
                 Text = "Show All",
                 AutoSize = true,
-                Margin = new Padding(0,4,8,4)
+                Margin = new Padding(0, 4, 8, 4)
             };
             showAllButton.Click += (s, e) =>
             {
                 try
                 {
-                    if (originalImage == null || pictureBox == null) {
+                    if (originalImage == null || pictureBox == null)
+                    {
                         UpdateStatus("No image to fit");
                         return;
                     }
 
-                    // Compute zoomFactor so that the original image fits into the picture box
                     zoomFactor = maxZoomFactor(false, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
-
-                    // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
                     {
-                        fullImageClipCenter = new Point(fullImage.Width /2, fullImage.Height /2);
+                        fullImageClipCenter = new Point(fullImage.Width / 2, fullImage.Height / 2);
                     }
 
                     updatePictureBoxImage();
@@ -323,7 +320,7 @@ namespace PhotoFileViewer
                 }
             };
 
-            // Show All button to fit the original image into the picture box
+            // Fill button
             var fillButton = new Button
             {
                 Text = "Fill",
@@ -340,10 +337,7 @@ namespace PhotoFileViewer
                         return;
                     }
 
-                    // Compute zoomFactor so that the original image fits into the picture box
                     zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
-
-                    // Center the clip on the fullImage so the original (which is centered in fullImage) is shown
                     if (fullImage != null)
                     {
                         fullImageClipCenter = new Point(fullImage.Width / 2, fullImage.Height / 2);
@@ -375,6 +369,17 @@ namespace PhotoFileViewer
                 Text = "",
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Padding = new Padding(10, 5, 10, 5),
+                BackColor = Color.LightBlue,
+                Dock = DockStyle.Fill
+            };
+
+            // Photo info label (shows original image resolution)
+            photoInfo = new Label
+            {
+                Text = "",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Segoe UI", 10, FontStyle.Regular),
                 Padding = new Padding(10, 5, 10, 5),
                 BackColor = Color.LightBlue,
                 Dock = DockStyle.Fill
@@ -412,7 +417,7 @@ namespace PhotoFileViewer
 
                     int pbW = pictureBox.ClientSize.Width;
                     int pbH = pictureBox.ClientSize.Height;
-                    if (pbW <=0 || pbH <=0) return;
+                    if (pbW <= 0 || pbH <= 0) return;
 
                     // Source area before zoom
                     int srcW1 = (int)Math.Round((double)pbW * zoomFactor);
@@ -429,16 +434,17 @@ namespace PhotoFileViewer
                     double py = srcArea1.Y + (mouseY / (double)pbH) * srcArea1.Height;
 
                     // Multiplicative step factor —10% per wheel step (can be tuned)
-                    double stepFactor =1.1;
+                    // If Control is pressed, use a finer step
+                    double stepFactor = (ModifierKeys & Keys.Control) == Keys.Control ? 1.025 : 1.1;
 
-                    if (e.Delta >0)
+                    if (e.Delta > 0)
                     {
                         double max = maxZoomFactor(false, originalImage.Width, originalImage.Height,
-                        overlayRectangle.Width >0 ? overlayRectangle.Width : pbW,
-                        overlayRectangle.Height >0 ? overlayRectangle.Height : pbH);
+                        overlayRectangle.Width > 0 ? overlayRectangle.Width : pbW,
+                        overlayRectangle.Height > 0 ? overlayRectangle.Height : pbH);
                         zoomFactor = Math.Min(max, zoomFactor * stepFactor);
                     }
-                    else if (e.Delta <0)
+                    else if (e.Delta < 0)
                     {
                         zoomFactor = Math.Max(0.1, zoomFactor / stepFactor);
                     }
@@ -451,14 +457,14 @@ namespace PhotoFileViewer
                     double desiredSrcX = px - (mouseX / (double)pbW) * srcW2;
                     double desiredSrcY = py - (mouseY / (double)pbH) * srcH2;
 
-                    double desiredCenterX = desiredSrcX + srcW2 /2.0;
-                    double desiredCenterY = desiredSrcY + srcH2 /2.0;
+                    double desiredCenterX = desiredSrcX + srcW2 / 2.0;
+                    double desiredCenterY = desiredSrcY + srcH2 / 2.0;
 
                     var tentativeCenter = new Point((int)Math.Round(desiredCenterX), (int)Math.Round(desiredCenterY));
                     var srcArea2 = justifyRectangleInImage(fullImage, tentativeCenter, srcW2, srcH2);
                     if (!srcArea2.IsEmpty)
                     {
-                        fullImageClipCenter = new Point(srcArea2.X + srcArea2.Width /2, srcArea2.Y + srcArea2.Height /2);
+                        fullImageClipCenter = new Point(srcArea2.X + srcArea2.Width / 2, srcArea2.Y + srcArea2.Height / 2);
                     }
 
                     UpdateStatus($"Zoom factor: {zoomFactor:0.00}");
@@ -600,7 +606,7 @@ namespace PhotoFileViewer
                     }
 
                     Rectangle srcRect = GetOverlayRectangleOnFullImage(overlayRectangle, fullImageClipCenter, zoomFactor);
-                    Rectangle dstRect = new Rectangle(0,0, srcRect.Width, srcRect.Height);
+                    Rectangle dstRect = new Rectangle(0, 0, srcRect.Width, srcRect.Height);
 
                     // If user did not selected Original, save at a fixed resolution depending on aspect and resolution
                     if (!string.Equals(saveResolution, "Original", StringComparison.OrdinalIgnoreCase))
@@ -631,10 +637,10 @@ namespace PhotoFileViewer
                                         try
                                         {
                                             var newProp = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
-                                            newProp.Id =274;
-                                            newProp.Type =3; // SHORT
-                                            newProp.Len =2;
-                                            newProp.Value = new byte[] {1,0 }; // little-endian1
+                                            newProp.Id = 274;
+                                            newProp.Type = 3; // SHORT
+                                            newProp.Len = 2;
+                                            newProp.Value = new byte[] { 1, 0 }; // little-endian1
                                             bmp.SetPropertyItem(newProp);
                                         }
                                         catch { }
@@ -687,7 +693,7 @@ namespace PhotoFileViewer
                         // Choose JPEG encoder to save; overwrite if exists
                         bmp.Save(destPath, System.Drawing.Imaging.ImageFormat.Jpeg);
 
-                   
+
                     }
                 }
                 catch (Exception ex)
@@ -704,26 +710,27 @@ namespace PhotoFileViewer
 
             storageFolderPanel.Controls.Add(layout);
 
-            // Main layout to stack panels vertically: controlPanel, imagePanel, storageFolderPanel, statusLabel
+            // Main layout
             var mainLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
                 Padding = new Padding(0),
                 Margin = new Padding(0)
             };
 
-            // Row styles: controlPanel fixed, imagePanel fills, storageFolderPanel fixed, statusLabel fixed
             mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F)); // controlPanel
             mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // imagePanel fills remaining
             mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F)); // storageFolderPanel
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F)); // photoInfo
             mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F)); // statusLabel
 
             mainLayout.Controls.Add(controlPanel, 0, 0);
             mainLayout.Controls.Add(imagePanel, 0, 1);
             mainLayout.Controls.Add(storageFolderPanel, 0, 2);
-            mainLayout.Controls.Add(statusLabel, 0, 3);
+            mainLayout.Controls.Add(photoInfo, 0, 3);
+            mainLayout.Controls.Add(statusLabel, 0, 4);
 
             this.Controls.Add(mainLayout);
 
@@ -760,7 +767,7 @@ namespace PhotoFileViewer
 
                     // Source rectangle size: try to match pictureBox size, but clamp to fullImage bounds
                     Rectangle srcArea = justifyRectangleInImage(fullImage, fullImageClipCenter,
-                        (int)Math.Round((double)pbw * zoomFactor), 
+                        (int)Math.Round((double)pbw * zoomFactor),
                         (int)Math.Round((double)pbh * zoomFactor));
                     Rectangle dstArea = new Rectangle(0, 0, pbw, pbh);
 
@@ -771,13 +778,12 @@ namespace PhotoFileViewer
         }
         private Rectangle computeOverlayRectangle(string aspectRatio, int w, int h)
         {
-            const int overlayPadding = 15;      
-            
+            const int overlayPadding = 15;
+
             double ratio = ParseAspectRatio(aspectRatio);
             if (ratio <= 0)
                 return Rectangle.Empty;
 
-            // Determine maximum rectangle matching ratio that fits within w x h
             double controlRatio = (double)w / h;
             int rectW, rectH;
             if (controlRatio > ratio)
@@ -851,14 +857,14 @@ namespace PhotoFileViewer
 
             return new Rectangle(0, 0, w, h);
         }
-        
+
         private void PictureBox_Paint(object sender, PaintEventArgs e)
         {
             try
             {
                 int w = pictureBox.ClientSize.Width;
-                int h = pictureBox.ClientSize.Height; 
-                
+                int h = pictureBox.ClientSize.Height;
+
                 if (w <= 0 || h <= 0)
                     return;
 
@@ -868,7 +874,7 @@ namespace PhotoFileViewer
                     e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                     e.Graphics.CompositingQuality = CompositingQuality.HighQuality;
 
-                    e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0,0, w, h));
+                    e.Graphics.DrawImage(pictureBox.Image, new Rectangle(0, 0, w, h));
                 }
 
                 int x = overlayRectangle.X;
@@ -890,18 +896,18 @@ namespace PhotoFileViewer
                         diminishedQuality = true;
                     }
                 }
-                
+
                 // Draw a semi-transparent border by filling the areas outside the inner rectangle.
                 // The inner rectangle remains fully transparent so the image shows through.
-                var overlayColor = Color.FromArgb(140,0,0,0); // semi-transparent black
+                var overlayColor = Color.FromArgb(140, 0, 0, 0); // semi-transparent black
                 using (var brush = new SolidBrush(overlayColor))
                 {
                     // Top
-                    e.Graphics.FillRectangle(brush,0,0, w, y);
+                    e.Graphics.FillRectangle(brush, 0, 0, w, y);
                     // Bottom
-                    e.Graphics.FillRectangle(brush,0, y + rectH, w, h - (y + rectH));
+                    e.Graphics.FillRectangle(brush, 0, y + rectH, w, h - (y + rectH));
                     // Left
-                    e.Graphics.FillRectangle(brush,0, y, x, rectH);
+                    e.Graphics.FillRectangle(brush, 0, y, x, rectH);
                     // Right
                     e.Graphics.FillRectangle(brush, x + rectW, y, w - (x + rectW), rectH);
                 }
@@ -909,28 +915,28 @@ namespace PhotoFileViewer
                 if (showRotationGrid)
                 {
                     var aspect = aspectComboBox.SelectedItem as string ?? "16:9";
-                    int cols =16, rows =9;
-                    if (string.Equals(aspect, "4:5", StringComparison.OrdinalIgnoreCase)) { cols =4; rows =5; }
-                    else if (string.Equals(aspect, "Square", StringComparison.OrdinalIgnoreCase)) { cols =5; rows =5; }
-                    else if (string.Equals(aspect, "16:9", StringComparison.OrdinalIgnoreCase)) { cols =16; rows =9; }
+                    int cols = 16, rows = 9;
+                    if (string.Equals(aspect, "4:5", StringComparison.OrdinalIgnoreCase)) { cols = 4; rows = 5; }
+                    else if (string.Equals(aspect, "Square", StringComparison.OrdinalIgnoreCase)) { cols = 5; rows = 5; }
+                    else if (string.Equals(aspect, "16:9", StringComparison.OrdinalIgnoreCase)) { cols = 16; rows = 9; }
 
-                    if (cols >0 && rows >0 && rectW >0 && rectH >0)
+                    if (cols > 0 && rows > 0 && rectW > 0 && rectH > 0)
                     {
-                        using (var pen = new Pen(Color.FromArgb(180,255,255,255),1))
+                        using (var pen = new Pen(Color.FromArgb(180, 255, 255, 255), 1))
                         {
                             pen.DashStyle = DashStyle.Solid;
                             float cellW = rectW / (float)cols;
                             float cellH = rectH / (float)rows;
 
                             // draw vertical lines
-                            for (int i =1; i < cols; i++)
+                            for (int i = 1; i < cols; i++)
                             {
                                 float gx = x + i * cellW;
                                 e.Graphics.DrawLine(pen, gx, y, gx, y + rectH);
                             }
 
                             // draw horizontal lines
-                            for (int j =1; j < rows; j++)
+                            for (int j = 1; j < rows; j++)
                             {
                                 float gy = y + j * cellH;
                                 e.Graphics.DrawLine(pen, x, gy, x + rectW, gy);
@@ -939,10 +945,10 @@ namespace PhotoFileViewer
                     }
                 }
                 // Optionally draw a thin border line to delineate the inner rectangle
-                using (var pen = new Pen(diminishedQuality ? Color.Red : Color.FromArgb(200,255,255,255),1))
+                using (var pen = new Pen(diminishedQuality ? Color.Red : Color.FromArgb(200, 255, 255, 255), 1))
                 {
                     e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                    e.Graphics.DrawRectangle(pen, x, y, rectW -1, rectH -1);
+                    e.Graphics.DrawRectangle(pen, x, y, rectW - 1, rectH - 1);
                 }
 
                 // Draw rubberband line if right-dragging
@@ -950,7 +956,7 @@ namespace PhotoFileViewer
                 {
                     try
                     {
-                        using (var rbPen = new Pen(Color.Yellow,2))
+                        using (var rbPen = new Pen(Color.Yellow, 2))
                         {
                             rbPen.DashStyle = DashStyle.Solid;
                             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1006,7 +1012,7 @@ namespace PhotoFileViewer
 
             int pbw = pictureBox.ClientSize.Width;
             int pbh = pictureBox.ClientSize.Height;
-            if (pbw <=0 || pbh <=0) return;
+            if (pbw <= 0 || pbh <= 0) return;
 
             // Source rectangle size used in Paint
             int srcW = Math.Min(fullImage.Width, pbw);
@@ -1023,8 +1029,8 @@ namespace PhotoFileViewer
             int newCenterY = dragStartCenter.Y - (int)Math.Round((double)deltaSrcY * zoomFactor);
 
             // Clamp to image bounds
-            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width -1));
-            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height -1));
+            newCenterX = Math.Max(0, Math.Min(newCenterX, fullImage.Width - 1));
+            newCenterY = Math.Max(0, Math.Min(newCenterY, fullImage.Height - 1));
 
             fullImageClipCenter = new Point(newCenterX, newCenterY);
             updatePictureBoxImage();
@@ -1205,7 +1211,7 @@ namespace PhotoFileViewer
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
 
-            if ((dstArea.Width/dstArea.Height) != (srcArea.Width/srcArea.Height))
+            if ((dstArea.Width / dstArea.Height) != (srcArea.Width / srcArea.Height))
             {
                 // Aspect ratios do not match; cannot scale properly
                 return null;
@@ -1281,19 +1287,19 @@ namespace PhotoFileViewer
                             old.Dispose();
                         }
 
-                        // Create a copy (Bitmap) so it does not depend on the stream
                         originalImage = new Bitmap(img);
 
                         // Capture metadata (PropertyItems) from the original image, if any
                         try
                         {
                             var ids = img.PropertyIdList;
-                            if (ids != null && ids.Length >0)
+                            if (ids != null && ids.Length > 0)
                             {
                                 originalPropertyItems = new PropertyItem[ids.Length];
-                                for (int i =0; i < ids.Length; i++)
+                                for (int i = 0; i < ids.Length; i++)
                                 {
-                                    try { 
+                                    try
+                                    {
                                         if (img.GetPropertyItem(ids[i]).Id == EXIFOrientationID)
                                         {
                                             // Handle EXIF Orientation tag to rotate the image to correct orientation
@@ -1310,11 +1316,12 @@ namespace PhotoFileViewer
                                             // Don't set orientation metadata on the saved image since we already applied it;
                                             // set to 1 (Horizontal)
                                         }
-                                        else 
+                                        else
                                         {
                                             originalPropertyItems[i] = img.GetPropertyItem(ids[i]);
                                         }
-                                    } catch { originalPropertyItems[i] = null; }
+                                    }
+                                    catch { originalPropertyItems[i] = null; }
                                 }
                             }
                             else
@@ -1330,8 +1337,8 @@ namespace PhotoFileViewer
                         // Create a new fullImage twice as large in each dimension, filled with black,
                         // and draw the original image centered inside it.
                         int max = Math.Max(originalImage.Width, originalImage.Height);
-                        int fullW = Math.Min(16000,max * 3);
-                        int fullH = Math.Min(16000,max * 3);
+                        int fullW = Math.Min(16000, max * 3);
+                        int fullH = Math.Min(16000, max * 3);
                         var big = new Bitmap(fullW, fullH);
                         using (var g = Graphics.FromImage(big))
                         {
@@ -1346,12 +1353,13 @@ namespace PhotoFileViewer
 
                         // Set fullImage to the constructed large bitmap and dispose the temporary original
                         fullImage = big;
- 
+
                         updatePictureBoxImage();
+                        // Update photo info label with original image resolution
+                        try { photoInfo.Text = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { photoInfo.Text = string.Empty; }
                     }
                 }
 
-                // With Dock = Fill and SizeMode = Zoom, the image will be scaled to fit the available window area.
                 string fileName = Path.GetFileName(filePath);
                 currentFilePath = filePath;
                 string fileSize = FormatFileSize(new FileInfo(filePath).Length);
@@ -1362,17 +1370,16 @@ namespace PhotoFileViewer
 
                 UpdateStatus($"[{timestamp}] Opened: {fileName} ({fileSize}) - {imgW}x{imgH} (fitted to window)");
 
-                // redraw overlay when a new image is loaded
                 pictureBox.Refresh();
             }
             catch (Exception ex)
             {
                 UpdateStatus($"Error opening file: {ex.Message}");
                 MessageBox.Show(
-                    $"Error opening file:\n{ex.Message}",
-                    "Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                $"Error opening file:\n{ex.Message}",
+                "Error",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             }
         }
 
@@ -1409,11 +1416,11 @@ namespace PhotoFileViewer
                 try
                 {
                     using (var server = new NamedPipeServerStream(
-                        PIPE_NAME,
-                        PipeDirection.In,
-                        NamedPipeServerStream.MaxAllowedServerInstances,
-                        PipeTransmissionMode.Message,
-                        PipeOptions.Asynchronous))
+                    PIPE_NAME,
+                    PipeDirection.In,
+                    NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Message,
+                    PipeOptions.Asynchronous))
                     {
                         await server.WaitForConnectionAsync();
 
@@ -1442,12 +1449,12 @@ namespace PhotoFileViewer
             try
             {
                 using (var client = new NamedPipeClientStream(
-                    ".",
-                    PIPE_NAME,
-                    PipeDirection.Out,
-                    PipeOptions.None))
+                ".",
+                PIPE_NAME,
+                PipeDirection.Out,
+                PipeOptions.None))
                 {
-                    client.Connect(2000); // 2 second timeout
+                    client.Connect(2000);
 
                     using (var writer = new StreamWriter(client, Encoding.UTF8))
                     {
@@ -1480,7 +1487,7 @@ namespace PhotoFileViewer
 
                 if (!string.IsNullOrEmpty(settings.Aspect))
                 {
-                    for (int i =0; i < aspectComboBox.Items.Count; i++)
+                    for (int i = 0; i < aspectComboBox.Items.Count; i++)
                     {
                         if (string.Equals(aspectComboBox.Items[i].ToString(), settings.Aspect, StringComparison.OrdinalIgnoreCase))
                         {
@@ -1490,10 +1497,9 @@ namespace PhotoFileViewer
                     }
                 }
 
-                // Load persisted resolution (High/Low)
                 if (!string.IsNullOrEmpty(settings.SaveResolution))
                 {
-                    for (int i =0; i < resolutionComboBox.Items.Count; i++)
+                    for (int i = 0; i < resolutionComboBox.Items.Count; i++)
                     {
                         if (string.Equals(resolutionComboBox.Items[i].ToString(), settings.SaveResolution, StringComparison.OrdinalIgnoreCase))
                         {
@@ -1504,14 +1510,13 @@ namespace PhotoFileViewer
                     }
                 }
 
-                if (settings.FormWidth >100 && settings.FormHeight >100)
+                if (settings.FormWidth > 100 && settings.FormHeight > 100)
                 {
                     this.Size = new Size(settings.FormWidth, settings.FormHeight);
                 }
             }
             catch
             {
-                // ignore load errors
             }
         }
 
@@ -1534,7 +1539,6 @@ namespace PhotoFileViewer
             }
             catch
             {
-                // ignore save errors
             }
         }
 
@@ -1545,7 +1549,7 @@ namespace PhotoFileViewer
             public string SaveResolution { get; set; }
             public int FormWidth { get; set; }
             public int FormHeight { get; set; }
-        } 
+        }
     }
 
     static class Program
@@ -1558,7 +1562,6 @@ namespace PhotoFileViewer
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // Get file path from command line
             string filePath = args.Length > 0 ? args[0] : string.Empty;
 
             bool createdNew;
@@ -1566,34 +1569,31 @@ namespace PhotoFileViewer
             {
                 if (!createdNew)
                 {
-                    // Another instance is already running
                     if (string.IsNullOrEmpty(filePath))
                     {
                         MessageBox.Show(
-                            "Photo File Viewer is already running.",
-                            "Already Running",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Information);
+                        "Photo File Viewer is already running.",
+                        "Already Running",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
                         return;
                     }
 
                     if (PhotoViewerForm.SendFileToExistingInstance(filePath))
                     {
-                        // File sent successfully to existing instance
                         return;
                     }
                     else
                     {
                         MessageBox.Show(
-                            "Could not connect to existing instance.\nThe file was not opened.",
-                            "Error",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Error);
+                        "Could not connect to existing instance.\nThe file was not opened.",
+                        "Error",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
                         return;
                     }
                 }
 
-                // This is the first instance
                 try
                 {
                     Application.Run(new PhotoViewerForm(filePath));
