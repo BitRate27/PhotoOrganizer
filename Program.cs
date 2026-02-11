@@ -1346,8 +1346,7 @@ namespace PhotoFileViewer
                 var loc = GetImageLocation(items);
                 if (string.IsNullOrEmpty(loc)) return string.Empty;
 
-                // var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GEOCODE_API_KEY");
-                var apiKey = "AIzaSyB4DT_DYS4ZO5cYDsriMnGrMKsf1CRGcbs";
+                var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GEOCODE_API_KEY");
 
                 if (string.IsNullOrEmpty(apiKey)) return string.Empty;
 
@@ -1426,13 +1425,23 @@ namespace PhotoFileViewer
                 {
                     for (int i =0; i < originalPropertyItems.Length; i++)
                     {
-                        if (originalPropertyItems[i] != null && originalPropertyItems[i].Id == pi.Id) { originalPropertyItems[i] = pi; return; }
+                        if (originalPropertyItems[i] != null && originalPropertyItems[i].Id == pi.Id) 
+                        { 
+                            originalPropertyItems[i] = pi; 
+                            return; 
+                        }
                     }
                     for (int i =0; i < originalPropertyItems.Length; i++)
                     {
-                        if (originalPropertyItems[i] == null) { originalPropertyItems[i] = pi; return; }
+                        if (originalPropertyItems[i] == null) 
+                        { 
+                            originalPropertyItems[i] = pi; 
+                            return; 
+                        }
                     }
-                    var list = new System.Collections.Generic.List<PropertyItem>(originalPropertyItems); list.Add(pi); originalPropertyItems = list.ToArray();
+                    var list = new System.Collections.Generic.List<PropertyItem>(originalPropertyItems); 
+                    list.Add(pi); 
+                    originalPropertyItems = list.ToArray();
                 };
 
                 SetOrReplace(latRef); SetOrReplace(lonRef); SetOrReplace(latItem); SetOrReplace(lonItem);
