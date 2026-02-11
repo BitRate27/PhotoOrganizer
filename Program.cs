@@ -5,10 +5,12 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Pipes;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Newtonsoft.Json.Linq;
 using static System.Windows.Forms.MonthCalendar;
 
 namespace PhotoFileViewer
@@ -45,6 +47,8 @@ namespace PhotoFileViewer
         private Image fullImage;
         // Store original image metadata (EXIF) property items
         private PropertyItem[] originalPropertyItems;
+        private bool gpsLocationAvailable = false;
+        private TextBox locationInputTextBox;
 
         // Center point in fullImage to clip around (in source image coordinates)
         private Point fullImageClipCenter;
@@ -379,11 +383,39 @@ namespace PhotoFileViewer
             {
                 Text = "",
                 TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Segoe UI", 10, FontStyle.Regular),
-                Padding = new Padding(10, 5, 10, 5),
+                Font = new Font("Segoe UI",10, FontStyle.Regular),
+                Padding = new Padding(10,5,10,5),
                 BackColor = Color.LightBlue,
-                Dock = DockStyle.Fill
+                Dock = DockStyle.Left,
+                AutoSize = true
             };
+
+            // TextBox for user to paste lat,long when no GPS EXIF is available. Initially hidden.
+            locationInputTextBox = new TextBox
+            {
+                Visible = false,
+                Width =300,
+                Dock = DockStyle.Right,
+                Margin = new Padding(10,3,10,3)
+            };
+            locationInputTextBox.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    try { HandleLocationInput(locationInputTextBox.Text); } catch { }
+                }
+            };
+
+            // Panel to contain photoInfo label and optional location input textbox
+            var photoInfoPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.LightBlue
+            };
+            photoInfoPanel.Controls.Add(photoInfo);
+            photoInfoPanel.Controls.Add(locationInputTextBox);
 
             // Panel that contains the PictureBox (middle, fills available space)
             imagePanel = new Panel
@@ -729,7 +761,7 @@ namespace PhotoFileViewer
             mainLayout.Controls.Add(controlPanel, 0, 0);
             mainLayout.Controls.Add(imagePanel, 0, 1);
             mainLayout.Controls.Add(storageFolderPanel, 0, 2);
-            mainLayout.Controls.Add(photoInfo, 0, 3);
+            mainLayout.Controls.Add(photoInfoPanel,0,3);
             mainLayout.Controls.Add(statusLabel, 0, 4);
 
             this.Controls.Add(mainLayout);
@@ -1211,6 +1243,10 @@ namespace PhotoFileViewer
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
 
+            if (srcArea.IsEmpty || dstArea.Height <= 0 || srcArea.Height <= 0)
+            {
+                return null;
+            }   
             if ((dstArea.Width / dstArea.Height) != (srcArea.Width / srcArea.Height))
             {
                 // Aspect ratios do not match; cannot scale properly
@@ -1302,6 +1338,125 @@ namespace PhotoFileViewer
             }
         }
 
+        // Call Google Geocode API to resolve lat/lon to a formatted address. Uses environment variable GOOGLE_GEOCODE_API_KEY.
+        private async Task<string> GetImageAddressAsync(PropertyItem[] items)
+        {
+            try
+            {
+                var loc = GetImageLocation(items);
+                if (string.IsNullOrEmpty(loc)) return string.Empty;
+
+                // var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GEOCODE_API_KEY");
+                var apiKey = "AIzaSyB4DT_DYS4ZO5cYDsriMnGrMKsf1CRGcbs";
+
+                if (string.IsNullOrEmpty(apiKey)) return string.Empty;
+
+                var url = $"https://maps.googleapis.com/maps/api/geocode/json?latlng={Uri.EscapeDataString(loc)}&key={Uri.EscapeDataString(apiKey)}";
+
+                using (var http = new HttpClient())
+                {
+                    http.Timeout = TimeSpan.FromSeconds(5);
+                    var resp = await http.GetAsync(url).ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode) return string.Empty;
+                    var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(body)) return string.Empty;
+
+                    try
+                    {
+                        var j = JObject.Parse(body);
+                        var status = (string)j["status"];
+                        if (!string.Equals(status, "OK", StringComparison.OrdinalIgnoreCase)) return string.Empty;
+                        var first = j["results"]?.First;
+                        if (first == null) return string.Empty;
+                        var formatted = (string)first["formatted_address"];
+                        return formatted ?? string.Empty;
+                    }
+                    catch { return string.Empty; }
+                }
+            }
+            catch { return string.Empty; }
+        }
+
+        // Handle user-pasted lat,long input, convert to EXIF PropertyItems and update state
+        private void HandleLocationInput(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var parts = text.Split(new char[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length <2) return;
+            if (!double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double lat)) return;
+            if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double lon)) return;
+
+            try
+            {
+                if (originalPropertyItems == null) originalPropertyItems = new PropertyItem[4];
+
+                var latRef = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                latRef.Id =0x0001; latRef.Type =2; latRef.Len =2; latRef.Value = Encoding.ASCII.GetBytes((lat >=0 ? "N" : "S") + "\0");
+
+                var lonRef = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                lonRef.Id =0x0003; lonRef.Type =2; lonRef.Len =2; lonRef.Value = Encoding.ASCII.GetBytes((lon >=0 ? "E" : "W") + "\0");
+
+                Func<double, byte[]> ToRationalTriplet = (double val) =>
+                {
+                    val = Math.Abs(val);
+                    int deg = (int)Math.Floor(val);
+                    double rem = (val - deg) *60.0;
+                    int min = (int)Math.Floor(rem);
+                    double sec = (rem - min) *60.0;
+                    byte[] bytes = new byte[24];
+                    uint n1 = (uint)deg; uint d1 =1;
+                    uint n2 = (uint)min; uint d2 =1;
+                    uint n3 = (uint)Math.Round(sec *1000000.0); uint d3 =1000000;
+                    Buffer.BlockCopy(BitConverter.GetBytes(n1),0, bytes,0,4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(d1),0, bytes,4,4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(n2),0, bytes,8,4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(d2),0, bytes,12,4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(n3),0, bytes,16,4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(d3),0, bytes,20,4);
+                    return bytes;
+                };
+
+                var latItem = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                latItem.Id =0x0002; latItem.Type =5; latItem.Value = ToRationalTriplet(lat); latItem.Len = latItem.Value.Length;
+
+                var lonItem = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+                lonItem.Id =0x0004; lonItem.Type =5; lonItem.Value = ToRationalTriplet(lon); lonItem.Len = lonItem.Value.Length;
+
+                Action<PropertyItem> SetOrReplace = (pi) =>
+                {
+                    for (int i =0; i < originalPropertyItems.Length; i++)
+                    {
+                        if (originalPropertyItems[i] != null && originalPropertyItems[i].Id == pi.Id) { originalPropertyItems[i] = pi; return; }
+                    }
+                    for (int i =0; i < originalPropertyItems.Length; i++)
+                    {
+                        if (originalPropertyItems[i] == null) { originalPropertyItems[i] = pi; return; }
+                    }
+                    var list = new System.Collections.Generic.List<PropertyItem>(originalPropertyItems); list.Add(pi); originalPropertyItems = list.ToArray();
+                };
+
+                SetOrReplace(latRef); SetOrReplace(lonRef); SetOrReplace(latItem); SetOrReplace(lonItem);
+
+                gpsLocationAvailable = true;
+
+                Task.Run(async () =>
+                {
+                    var addr = await GetImageAddressAsync(originalPropertyItems).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(addr))
+                    {
+                        if (this.IsHandleCreated)
+                        this.BeginInvoke(new Action(() => { photoInfo.Text = $"Original resolution: {originalImage.Width} x {originalImage.Height} Location: {addr}"; locationInputTextBox.Visible = false; }));
+                    }
+                    else
+                    {
+                        if (this.IsHandleCreated)
+                        this.BeginInvoke(new Action(() => { photoInfo.Text = $"Original resolution: {originalImage.Width} x {originalImage.Height} Location: {lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}"; locationInputTextBox.Visible = false; }));
+                    }
+                });
+            }
+            catch { }
+        }
+
         public void OpenFile(string filePath)
         {
             if (InvokeRequired)
@@ -1358,7 +1513,7 @@ namespace PhotoFileViewer
                         try
                         {
                             var ids = img.PropertyIdList;
-                            if (ids != null && ids.Length > 0)
+                            if (ids != null && ids.Length >0)
                             {
                                 originalPropertyItems = new PropertyItem[ids.Length];
                                 for (int i = 0; i < ids.Length; i++)
@@ -1399,6 +1554,30 @@ namespace PhotoFileViewer
                             originalPropertyItems = null;
                         }
 
+                        // Determine if GPS location EXIF data exists
+                        try
+                        {
+                            gpsLocationAvailable = false;
+                            if (originalPropertyItems != null && originalPropertyItems.Length >0)
+                            {
+                                // Check for GPS tags:0x0001..0x0004 (refs and coords) or presence of0x0002/0x0004
+                                foreach (var pi in originalPropertyItems)
+                                {
+                                    if (pi == null) continue;
+                                    if (pi.Id ==0x0001 || pi.Id ==0x0002 || pi.Id ==0x0003 || pi.Id ==0x0004)
+                                    {
+                                        gpsLocationAvailable = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                gpsLocationAvailable = false;
+                            }
+                        }
+                        catch { gpsLocationAvailable = false; }
+
                         // Create a new fullImage twice as large in each dimension, filled with black,
                         // and draw the original image centered inside it.
                         int max = Math.Max(originalImage.Width, originalImage.Height);
@@ -1427,11 +1606,46 @@ namespace PhotoFileViewer
                             try { info = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { info = string.Empty; }
                             try
                             {
-                                var loc = GetImageLocation(originalPropertyItems);
-                                if (!string.IsNullOrEmpty(loc))
+                                // If GPS data not available, indicate that
+                                if (!gpsLocationAvailable)
                                 {
                                     if (!string.IsNullOrEmpty(info)) info += " ";
-                                    info += "Location: " + loc;
+                                    info += "No location info";
+                                    try { locationInputTextBox.Visible = true; locationInputTextBox.Text = string.Empty; locationInputTextBox.Focus(); } catch { }
+                                }
+                                else
+                                {
+                                    try { locationInputTextBox.Visible = false; } catch { }
+                                    // Attempt to resolve GPS coordinates to a human-readable address using Google Geocode API
+                                    try
+                                    {
+                                        var addrTask = GetImageAddressAsync(originalPropertyItems);
+                                        addrTask.Wait(2000); // wait up to2s for quick UI update; non-blocking fallback below
+                                        string addr = addrTask.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? addrTask.Result : string.Empty;
+                                        if (string.IsNullOrEmpty(addr))
+                                        {
+                                            // If geocoding did not complete quickly, continue asynchronously to update label when done
+                                            addrTask.ContinueWith(t => {
+                                                try
+                                                {
+                                                    var a = t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? t.Result : string.Empty;
+                                                    if (!string.IsNullOrEmpty(a))
+                                                    {
+                                                        if (this.IsHandleCreated)
+                                                        this.BeginInvoke(new Action(() => { try { photoInfo.Text = info + (string.IsNullOrEmpty(info) ? "" : " ") + "Location: " + a; } catch { } }));
+                                                    }
+                                                }
+                                                catch { }
+                                            }, TaskScheduler.Default);
+                                        }
+
+                                        if (!string.IsNullOrEmpty(addr))
+                                        {
+                                            if (!string.IsNullOrEmpty(info)) info += " ";
+                                            info += "Location: " + addr;
+                                        }
+                                    }
+                                    catch { }
                                 }
                             }
                             catch { }
@@ -1622,6 +1836,8 @@ namespace PhotoFileViewer
             {
             }
         }
+
+        // In InitializeComponent(), after creating photoInfo label, add location input textbox (initially hidden)
 
         private class UserSettings
         {
