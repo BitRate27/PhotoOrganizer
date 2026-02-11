@@ -1346,11 +1346,9 @@ namespace PhotoFileViewer
                 var loc = GetImageLocation(items);
                 if (string.IsNullOrEmpty(loc)) return string.Empty;
 
-                var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GEOCODE_API_KEY");
+                if (string.IsNullOrEmpty(apiKey.Value)) return string.Empty;
 
-                if (string.IsNullOrEmpty(apiKey)) return string.Empty;
-
-                var url = $"https://maps.googleapis.com/maps/api/geocode/json?latlng={Uri.EscapeDataString(loc)}&key={Uri.EscapeDataString(apiKey)}";
+                var url = $"https://maps.googleapis.com/maps/api/geocode/json?latlng={Uri.EscapeDataString(loc)}&key={Uri.EscapeDataString(apiKey.Value)}";
 
                 using (var http = new HttpClient())
                 {

@@ -1,0 +1,1 @@
+public static class apiKey { public const string Value = "YOUR_KEY_HERE"; }
