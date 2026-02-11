@@ -1232,9 +1232,74 @@ namespace PhotoFileViewer
         {
             int srcW = (int)Math.Round((double)overlayRect.Width * zoomFactor);
             int srcH = (int)Math.Round((double)overlayRect.Height * zoomFactor);
-            int srcX = fullImageCenter.X - (srcW / 2);
-            int srcY = fullImageCenter.Y - (srcH / 2);
+            int srcX = fullImageCenter.X - (srcW /2);
+            int srcY = fullImageCenter.Y - (srcH /2);
             return new Rectangle(srcX, srcY, srcW, srcH);
+        }
+
+        // Try to read GPS/location from an array of PropertyItems (EXIF). Returns "lat,lon" or empty.
+        private string GetImageLocation(PropertyItem[] items)
+        {
+            try
+            {
+                if (items == null || items.Length ==0) return string.Empty;
+                const int GPSLatitudeId =0x0002;
+                const int GPSLongitudeId =0x0004;
+                const int GPSLatitudeRefId =0x0001;
+                const int GPSLongitudeRefId =0x0003;
+
+                PropertyItem latItem = null, lonItem = null, latRef = null, lonRef = null;
+                foreach (var pi in items)
+                {
+                    if (pi == null) continue;
+                    if (pi.Id == 0x8825)
+                    {
+                        // GPSInfo tag that may contain a pointer to the GPS IFD; not used here since we already have all PropertyItems
+                        continue;
+                    }
+                    if (pi.Id == GPSLatitudeId) latItem = pi;
+                    else if (pi.Id == GPSLongitudeId) lonItem = pi;
+                    else if (pi.Id == GPSLatitudeRefId) latRef = pi;
+                    else if (pi.Id == GPSLongitudeRefId) lonRef = pi;
+                }
+
+                if (latItem == null || lonItem == null) return string.Empty;
+
+                double ParseRationalTriplet(PropertyItem pi)
+                {
+                    var val = pi.Value;
+                    if (val == null || val.Length <24) return 0.0;
+                    double[] comps = new double[3];
+                    for (int i =0; i <3; i++)
+                    {
+                        int offset = i *8;
+                        uint num = BitConverter.ToUInt32(val, offset);
+                        uint den = BitConverter.ToUInt32(val, offset +4);
+                        comps[i] = den ==0 ?0.0 : (double)num / den;
+                    }
+                    return comps[0] + comps[1] /60.0 + comps[2] /3600.0;
+                }
+
+                double lat = ParseRationalTriplet(latItem);
+                double lon = ParseRationalTriplet(lonItem);
+
+                if (latRef != null && latRef.Value != null && latRef.Value.Length >0)
+                {
+                    var c = (char)latRef.Value[0];
+                    if (c == 'S' || c == 's') lat = -lat;
+                }
+                if (lonRef != null && lonRef.Value != null && lonRef.Value.Length >0)
+                {
+                    var c = (char)lonRef.Value[0];
+                    if (c == 'W' || c == 'w') lon = -lon;
+                }
+
+                return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.######},{1:0.######}", lat, lon);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         public void OpenFile(string filePath)
@@ -1355,8 +1420,24 @@ namespace PhotoFileViewer
                         fullImage = big;
 
                         updatePictureBoxImage();
-                        // Update photo info label with original image resolution
-                        try { photoInfo.Text = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { photoInfo.Text = string.Empty; }
+                        // Update photo info label with original image resolution and location if available
+                        try
+                        {
+                            string info = string.Empty;
+                            try { info = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { info = string.Empty; }
+                            try
+                            {
+                                var loc = GetImageLocation(originalPropertyItems);
+                                if (!string.IsNullOrEmpty(loc))
+                                {
+                                    if (!string.IsNullOrEmpty(info)) info += " ";
+                                    info += "Location: " + loc;
+                                }
+                            }
+                            catch { }
+                            photoInfo.Text = info;
+                        }
+                        catch { photoInfo.Text = string.Empty; }
                     }
                 }
 
