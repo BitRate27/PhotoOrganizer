@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using ImageMagick;
+using Newtonsoft.Json;
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -6,6 +7,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Pipes;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -130,7 +132,7 @@ namespace PhotoFileViewer
         }
         private void InitializeComponent()
         {
-            this.Text = "Photo File Viewer";
+            this.Text = "Photo Organizer";
             this.Size = new Size(700, 500);
             this.StartPosition = FormStartPosition.CenterScreen;
 
@@ -1495,182 +1497,383 @@ namespace PhotoFileViewer
 
                 // Read file into memory then create image from memory to avoid locking the file
                 byte[] bytes = File.ReadAllBytes(filePath);
-                using (var ms = new MemoryStream(bytes))
+                // Support HEIC/HEIF via ImageMagick: convert to JPEG in-memory so System.Drawing can read EXIF
+                bool usedMagick = false;
+                if (ext == ".heic" || ext == ".heif")
                 {
-                    using (var img = Image.FromStream(ms))
+                    try
                     {
-
-                        if (fullImage != null)
+                        using (var mag = new MagickImage(bytes))
                         {
-                            var old = fullImage;
-                            fullImage = null;
-                            old.Dispose();
-                        }
-
-                        if (originalImage != null)
-                        {
-                            var old = originalImage;
-                            originalImage = null;
-                            old.Dispose();
-                        }
-
-                        originalImage = new Bitmap(img);
-
-                        // Capture metadata (PropertyItems) from the original image, if any
-                        try
-                        {
-                            var ids = img.PropertyIdList;
-                            if (ids != null && ids.Length >0)
+                            // preserve profiles by writing as JPEG
+                            using (var ms2 = new MemoryStream())
                             {
-                                originalPropertyItems = new PropertyItem[ids.Length];
-                                for (int i = 0; i < ids.Length; i++)
+                                mag.Write(ms2, MagickFormat.Jpeg);
+                                ms2.Position =0;
+                                using (var img = Image.FromStream(ms2))
                                 {
+                                    usedMagick = true;
+                                    // existing logic continues here
+                                    if (fullImage != null)
+                                    {
+                                        var old = fullImage;
+                                        fullImage = null;
+                                        old.Dispose();
+                                    }
+
+                                    if (originalImage != null)
+                                    {
+                                        var old = originalImage;
+                                        originalImage = null;
+                                        old.Dispose();
+                                    }
+
+                                    originalImage = new Bitmap(img);
+
+                                    // Capture metadata (PropertyItems) from the original image, if any
                                     try
                                     {
-                                        if (img.GetPropertyItem(ids[i]).Id == EXIFOrientationID)
+                                        var ids = img.PropertyIdList;
+                                        if (ids != null && ids.Length >0)
                                         {
-                                            // Handle EXIF Orientation tag to rotate the image to correct orientation
-                                            if (img.GetPropertyItem(ids[i]).Value.Length >= 2)
+                                            originalPropertyItems = new PropertyItem[ids.Length];
+                                            for (int i = 0; i < ids.Length; i++)
                                             {
-                                                ushort orientation = BitConverter.ToUInt16(img.GetPropertyItem(ids[i]).Value, 0);
-                                                if (orientation == 3)
-                                                    originalImage.RotateFlip(RotateFlipType.Rotate180FlipNone);
-                                                else if (orientation == 6)
-                                                    originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
-                                                else if (orientation == 8)
-                                                    originalImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                                                try
+                                                {
+                                                    if (img.GetPropertyItem(ids[i]).Id == EXIFOrientationID)
+                                                    {
+                                                        // Handle EXIF Orientation tag to rotate the image to correct orientation
+                                                        if (img.GetPropertyItem(ids[i]).Value.Length >= 2)
+                                                        {
+                                                            ushort orientation = BitConverter.ToUInt16(img.GetPropertyItem(ids[i]).Value, 0);
+                                                            if (orientation == 3)
+                                                                originalImage.RotateFlip(RotateFlipType.Rotate180FlipNone);
+                                                            else if (orientation == 6)
+                                                                originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                                                            else if (orientation == 8)
+                                                                originalImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                                                        }
+                                                        // Don't set orientation metadata on the saved image since we already applied it;
+                                                        // set to 1 (Horizontal)
+                                                    }
+                                                    else
+                                                    {
+                                                        originalPropertyItems[i] = img.GetPropertyItem(ids[i]);
+                                                    }
+                                                }
+                                                catch { originalPropertyItems[i] = null; }
                                             }
-                                            // Don't set orientation metadata on the saved image since we already applied it;
-                                            // set to 1 (Horizontal)
                                         }
                                         else
                                         {
-                                            originalPropertyItems[i] = img.GetPropertyItem(ids[i]);
+                                            originalPropertyItems = null;
                                         }
                                     }
-                                    catch { originalPropertyItems[i] = null; }
-                                }
-                            }
-                            else
-                            {
-                                originalPropertyItems = null;
-                            }
-                        }
-                        catch
-                        {
-                            originalPropertyItems = null;
-                        }
-
-                        // Determine if GPS location EXIF data exists
-                        try
-                        {
-                            gpsLocationAvailable = false;
-                            if (originalPropertyItems != null && originalPropertyItems.Length >0)
-                            {
-                                // Check for GPS tags:0x0001..0x0004 (refs and coords) or presence of0x0002/0x0004
-                                foreach (var pi in originalPropertyItems)
-                                {
-                                    if (pi == null) continue;
-                                    if (pi.Id ==0x0001 || pi.Id ==0x0002 || pi.Id ==0x0003 || pi.Id ==0x0004)
+                                    catch
                                     {
-                                        gpsLocationAvailable = true;
-                                        break;
+                                        originalPropertyItems = null;
                                     }
-                                }
-                            }
-                            else
-                            {
-                                gpsLocationAvailable = false;
-                            }
-                        }
-                        catch { gpsLocationAvailable = false; }
 
-                        // Create a new fullImage twice as large in each dimension, filled with black,
-                        // and draw the original image centered inside it.
-                        int max = Math.Max(originalImage.Width, originalImage.Height);
-                        int fullW = Math.Min(16000, max * 3);
-                        int fullH = Math.Min(16000, max * 3);
-                        var big = new Bitmap(fullW, fullH);
-                        using (var g = Graphics.FromImage(big))
-                        {
-                            g.Clear(Color.Black);
-                            int offsetX = (fullW - originalImage.Width) / 2;
-                            int offsetY = (fullH - originalImage.Height) / 2;
-                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            g.DrawImage(originalImage, offsetX, offsetY, originalImage.Width, originalImage.Height);
-                        }
-
-                        fullImageClipCenter = new Point(fullW / 2, fullH / 2);
-
-                        // Set fullImage to the constructed large bitmap and dispose the temporary original
-                        fullImage = big;
-
-                        // Set initial zoomFactor so that the original image fits within the overlay rectangle
-                        if (originalImage.Width > originalImage.Height)
-                        {
-                            aspectComboBox.SelectedItem = "16:9";
-                        }
-                        else
-                        {
-                            aspectComboBox.SelectedItem = "4:5";
-                        }
-                        zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
-
-                        updatePictureBoxImage();
-
-                        // Update photo info label with original image resolution and location if available
-                        try
-                        {
-                            string info = string.Empty;
-                            try { info = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { info = string.Empty; }
-                            try
-                            {
-                                // If GPS data not available, indicate that
-                                if (!gpsLocationAvailable)
-                                {
-                                    if (!string.IsNullOrEmpty(info)) info += " ";
-                                    info += "No location info";
-                                    try { locationInputTextBox.Visible = true; locationInputTextBox.Text = string.Empty; locationInputTextBox.Focus(); } catch { }
-                                }
-                                else
-                                {
-                                    try { locationInputTextBox.Visible = false; } catch { }
-                                    // Attempt to resolve GPS coordinates to a human-readable address using Google Geocode API
+                                    // Determine if GPS location EXIF data exists
                                     try
                                     {
-                                        var addrTask = GetImageAddressAsync(originalPropertyItems);
-                                        addrTask.Wait(2000); // wait up to2s for quick UI update; non-blocking fallback below
-                                        string addr = addrTask.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? addrTask.Result : string.Empty;
-                                        if (string.IsNullOrEmpty(addr))
+                                        gpsLocationAvailable = false;
+                                        if (originalPropertyItems != null && originalPropertyItems.Length >0)
                                         {
-                                            // If geocoding did not complete quickly, continue asynchronously to update label when done
-                                            addrTask.ContinueWith(t => {
+                                            // Check for GPS tags:0x0001..0x0004 (refs and coords) or presence of0x0002/0x0004
+                                            foreach (var pi in originalPropertyItems)
+                                            {
+                                                if (pi == null) continue;
+                                                if (pi.Id ==0x0001 || pi.Id ==0x0002 || pi.Id ==0x0003 || pi.Id ==0x0004)
+                                                {
+                                                    gpsLocationAvailable = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            gpsLocationAvailable = false;
+                                        }
+                                    }
+                                    catch { gpsLocationAvailable = false; }
+
+                                    // Create a new fullImage twice as large in each dimension, filled with black,
+                                    // and draw the original image centered inside it.
+                                    int max = Math.Max(originalImage.Width, originalImage.Height);
+                                    int fullW = Math.Min(16000, max * 3);
+                                    int fullH = Math.Min(16000, max * 3);
+                                    var big = new Bitmap(fullW, fullH);
+                                    using (var g = Graphics.FromImage(big))
+                                    {
+                                        g.Clear(Color.Black);
+                                        int offsetX = (fullW - originalImage.Width) / 2;
+                                        int offsetY = (fullH - originalImage.Height) / 2;
+                                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                        g.DrawImage(originalImage, offsetX, offsetY, originalImage.Width, originalImage.Height);
+                                    }
+
+                                    fullImageClipCenter = new Point(fullW / 2, fullH / 2);
+
+                                    // Set fullImage to the constructed large bitmap and dispose the temporary original
+                                    fullImage = big;
+
+                                    // Set initial zoomFactor so that the original image fits within the overlay rectangle
+                                    if (originalImage.Width > originalImage.Height)
+                                    {
+                                        aspectComboBox.SelectedItem = "16:9";
+                                    }
+                                    else
+                                    {
+                                        aspectComboBox.SelectedItem = "4:5";
+                                    }
+                                    zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
+
+                                    updatePictureBoxImage();
+
+                                    // Update photo info label with original image resolution and location if available
+                                    try
+                                    {
+                                        string info = string.Empty;
+                                        try { info = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { info = string.Empty; }
+                                        try
+                                        {
+                                            // If GPS data not available, indicate that
+                                            if (!gpsLocationAvailable)
+                                            {
+                                                if (!string.IsNullOrEmpty(info)) info += " ";
+                                                info += "No location info";
+                                                try { locationInputTextBox.Visible = true; locationInputTextBox.Text = string.Empty; locationInputTextBox.Focus(); } catch { }
+                                            }
+                                            else
+                                            {
+                                                try { locationInputTextBox.Visible = false; } catch { }
+                                                // Attempt to resolve GPS coordinates to a human-readable address using Google Geocode API
                                                 try
                                                 {
-                                                    var a = t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? t.Result : string.Empty;
-                                                    if (!string.IsNullOrEmpty(a))
+                                                    var addrTask = GetImageAddressAsync(originalPropertyItems);
+                                                    addrTask.Wait(2000); // wait up to2s for quick UI update; non-blocking fallback below
+                                                    string addr = addrTask.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? addrTask.Result : string.Empty;
+                                                    if (string.IsNullOrEmpty(addr))
                                                     {
-                                                        if (this.IsHandleCreated)
-                                                        this.BeginInvoke(new Action(() => { try { photoInfo.Text = info + (string.IsNullOrEmpty(info) ? "" : " ") + "Location: " + a; } catch { } }));
+                                                        // If geocoding did not complete quickly, continue asynchronously to update label when done
+                                                        addrTask.ContinueWith(t => {
+                                                            try
+                                                            {
+                                                                var a = t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? t.Result : string.Empty;
+                                                                if (!string.IsNullOrEmpty(a))
+                                                                {
+                                                                    if (this.IsHandleCreated)
+                                                                    this.BeginInvoke(new Action(() => { try { photoInfo.Text = info + (string.IsNullOrEmpty(info) ? "" : " ") + "Location: " + a; } catch { } }));
+                                                                }
+                                                            }
+                                                            catch { }
+                                                        }, TaskScheduler.Default);
+                                                    }
+
+                                                    if (!string.IsNullOrEmpty(addr))
+                                                    {
+                                                        if (!string.IsNullOrEmpty(info)) info += " ";
+                                                        info += "Location: " + addr;
                                                     }
                                                 }
                                                 catch { }
-                                            }, TaskScheduler.Default);
+                                            }
                                         }
-
-                                        if (!string.IsNullOrEmpty(addr))
-                                        {
-                                            if (!string.IsNullOrEmpty(info)) info += " ";
-                                            info += "Location: " + addr;
-                                        }
+                                        catch { }
+                                        photoInfo.Text = info;
                                     }
-                                    catch { }
+                                    catch { photoInfo.Text = string.Empty; }
                                 }
                             }
-                            catch { }
-                            photoInfo.Text = info;
                         }
-                        catch { photoInfo.Text = string.Empty; }
+                    }
+                    catch (Exception magEx)
+                    {
+                        UpdateStatus($"Error reading HEIC image: {magEx.Message}");
+                        return;
+                    }
+                }
+                if (!usedMagick)
+                {
+                    using (var ms = new MemoryStream(bytes))
+                    {
+                        using (var img = Image.FromStream(ms))
+                        {
+
+                            if (fullImage != null)
+                            {
+                                var old = fullImage;
+                                fullImage = null;
+                                old.Dispose();
+                            }
+
+                            if (originalImage != null)
+                            {
+                                var old = originalImage;
+                                originalImage = null;
+                                old.Dispose();
+                            }
+
+                            originalImage = new Bitmap(img);
+
+                            // Capture metadata (PropertyItems) from the original image, if any
+                            try
+                            {
+                                var ids = img.PropertyIdList;
+                                if (ids != null && ids.Length >0)
+                                {
+                                    originalPropertyItems = new PropertyItem[ids.Length];
+                                    for (int i = 0; i < ids.Length; i++)
+                                    {
+                                        try
+                                        {
+                                            if (img.GetPropertyItem(ids[i]).Id == EXIFOrientationID)
+                                            {
+                                                // Handle EXIF Orientation tag to rotate the image to correct orientation
+                                                if (img.GetPropertyItem(ids[i]).Value.Length >= 2)
+                                                {
+                                                    ushort orientation = BitConverter.ToUInt16(img.GetPropertyItem(ids[i]).Value, 0);
+                                                    if (orientation == 3)
+                                                        originalImage.RotateFlip(RotateFlipType.Rotate180FlipNone);
+                                                    else if (orientation == 6)
+                                                        originalImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                                                    else if (orientation == 8)
+                                                        originalImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                                                }
+                                                // Don't set orientation metadata on the saved image since we already applied it;
+                                                // set to 1 (Horizontal)
+                                            }
+                                            else
+                                            {
+                                                originalPropertyItems[i] = img.GetPropertyItem(ids[i]);
+                                            }
+                                        }
+                                        catch { originalPropertyItems[i] = null; }
+                                    }
+                                }
+                                else
+                                {
+                                    originalPropertyItems = null;
+                                }
+                            }
+                            catch
+                            {
+                                originalPropertyItems = null;
+                            }
+
+                            // Determine if GPS location EXIF data exists
+                            try
+                            {
+                                gpsLocationAvailable = false;
+                                if (originalPropertyItems != null && originalPropertyItems.Length >0)
+                                {
+                                    // Check for GPS tags:0x0001..0x0004 (refs and coords) or presence of0x0002/0x0004
+                                    foreach (var pi in originalPropertyItems)
+                                    {
+                                        if (pi == null) continue;
+                                        if (pi.Id ==0x0001 || pi.Id ==0x0002 || pi.Id ==0x0003 || pi.Id ==0x0004)
+                                        {
+                                            gpsLocationAvailable = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    gpsLocationAvailable = false;
+                                }
+                            }
+                            catch { gpsLocationAvailable = false; }
+
+                            // Create a new fullImage twice as large in each dimension, filled with black,
+                            // and draw the original image centered inside it.
+                            int max = Math.Max(originalImage.Width, originalImage.Height);
+                            int fullW = Math.Min(16000, max * 3);
+                            int fullH = Math.Min(16000, max * 3);
+                            var big = new Bitmap(fullW, fullH);
+                            using (var g = Graphics.FromImage(big))
+                            {
+                                g.Clear(Color.Black);
+                                int offsetX = (fullW - originalImage.Width) / 2;
+                                int offsetY = (fullH - originalImage.Height) / 2;
+                                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                g.DrawImage(originalImage, offsetX, offsetY, originalImage.Width, originalImage.Height);
+                            }
+
+                            fullImageClipCenter = new Point(fullW / 2, fullH / 2);
+
+                            // Set fullImage to the constructed large bitmap and dispose the temporary original
+                            fullImage = big;
+
+                            // Set initial zoomFactor so that the original image fits within the overlay rectangle
+                            if (originalImage.Width > originalImage.Height)
+                            {
+                                aspectComboBox.SelectedItem = "16:9";
+                            }
+                            else
+                            {
+                                aspectComboBox.SelectedItem = "4:5";
+                            }
+                            zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
+
+                            updatePictureBoxImage();
+
+                            // Update photo info label with original image resolution and location if available
+                            try
+                            {
+                                string info = string.Empty;
+                                try { info = $"Original resolution: {originalImage.Width} x {originalImage.Height}"; } catch { info = string.Empty; }
+                                try
+                                {
+                                    // If GPS data not available, indicate that
+                                    if (!gpsLocationAvailable)
+                                    {
+                                        if (!string.IsNullOrEmpty(info)) info += " ";
+                                        info += "No location info";
+                                        try { locationInputTextBox.Visible = true; locationInputTextBox.Text = string.Empty; locationInputTextBox.Focus(); } catch { }
+                                    }
+                                    else
+                                    {
+                                        try { locationInputTextBox.Visible = false; } catch { }
+                                        // Attempt to resolve GPS coordinates to a human-readable address using Google Geocode API
+                                        try
+                                        {
+                                            var addrTask = GetImageAddressAsync(originalPropertyItems);
+                                            addrTask.Wait(2000); // wait up to2s for quick UI update; non-blocking fallback below
+                                            string addr = addrTask.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? addrTask.Result : string.Empty;
+                                            if (string.IsNullOrEmpty(addr))
+                                            {
+                                                // If geocoding did not complete quickly, continue asynchronously to update label when done
+                                                addrTask.ContinueWith(t => {
+                                                    try
+                                                    {
+                                                        var a = t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? t.Result : string.Empty;
+                                                        if (!string.IsNullOrEmpty(a))
+                                                        {
+                                                            if (this.IsHandleCreated)
+                                                            this.BeginInvoke(new Action(() => { try { photoInfo.Text = info + (string.IsNullOrEmpty(info) ? "" : " ") + "Location: " + a; } catch { } }));
+                                                        }
+                                                    }
+                                                    catch { }
+                                                }, TaskScheduler.Default);
+                                            }
+
+                                            if (!string.IsNullOrEmpty(addr))
+                                            {
+                                                if (!string.IsNullOrEmpty(info)) info += " ";
+                                                info += "Location: " + addr;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                catch { }
+                                photoInfo.Text = info;
+                            }
+                            catch { photoInfo.Text = string.Empty; }
+                        }
                     }
                 }
 
@@ -1678,6 +1881,9 @@ namespace PhotoFileViewer
                 currentFilePath = filePath;
                 string fileSize = FormatFileSize(new FileInfo(filePath).Length);
                 string timestamp = DateTime.Now.ToString("HH:mm:ss");
+
+                // Bring application to foreground when a new file is opened
+                try { BringToFrontAndActivate(); } catch { }
 
                 int imgW = pictureBox.Image?.Width ?? 0;
                 int imgH = pictureBox.Image?.Height ?? 0;
@@ -1865,6 +2071,29 @@ namespace PhotoFileViewer
             public string SaveResolution { get; set; }
             public int FormWidth { get; set; }
             public int FormHeight { get; set; }
+        }
+
+        // Add Win32 API helper methods inside PhotoViewerForm class
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        private const int SW_SHOW =5;
+        private const int SW_RESTORE =9;
+
+        // Call this method to bring the form to front
+        private void BringToFrontAndActivate()
+        {
+         try
+         {
+         if (this.WindowState == FormWindowState.Minimized)
+         {
+        ShowWindow(this.Handle, SW_RESTORE);
+         }
+         SetForegroundWindow(this.Handle);
+         this.Activate();
+         }
+         catch { }
         }
     }
 
