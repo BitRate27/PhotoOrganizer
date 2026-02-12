@@ -1605,7 +1605,19 @@ namespace PhotoFileViewer
                         // Set fullImage to the constructed large bitmap and dispose the temporary original
                         fullImage = big;
 
+                        // Set initial zoomFactor so that the original image fits within the overlay rectangle
+                        if (originalImage.Width > originalImage.Height)
+                        {
+                            aspectComboBox.SelectedItem = "16:9";
+                        }
+                        else
+                        {
+                            aspectComboBox.SelectedItem = "4:5";
+                        }
+                        zoomFactor = maxZoomFactor(true, originalImage.Width, originalImage.Height, overlayRectangle.Width, overlayRectangle.Height);
+
                         updatePictureBoxImage();
+
                         // Update photo info label with original image resolution and location if available
                         try
                         {
